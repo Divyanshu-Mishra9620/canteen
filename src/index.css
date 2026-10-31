@@ -1,0 +1,261 @@
+@import "tailwindcss";
+@import "lenis/dist/lenis.css";
+
+/* `light:` variant for the few tweaks that only apply in light mode (e.g. softer shadows). */
+@custom-variant light (&:where([data-theme="light"], [data-theme="light"] *));
+
+/*
+ * Theme-aware palette. The ink scale is the page/surface ramp, `cream` is the main text colour,
+ * `edge` is the hairline/overlay colour, and `accent` is yellow used as *text*.
+ * They are runtime variables (see :root below) and `inline` makes utilities read them at the
+ * element, so a `.theme-dark` subtree can re-declare them and stay dark inside a light page.
+ */
+@theme inline {
+  --color-ink-950: var(--ink-950);
+  --color-ink-900: var(--ink-900);
+  --color-ink-850: var(--ink-850);
+  --color-ink-800: var(--ink-800);
+  --color-ink-700: var(--ink-700);
+  --color-cream: var(--cream);
+  --color-edge: var(--edge);
+  --color-accent: var(--accent);
+}
+
+@theme {
+  /* Constants: identical in both themes. */
+  --color-brand: #ffc72c;
+  --color-brand-300: #ffd866;
+  --color-brand-600: #f0b100;
+  --color-coal: #0a0a0a;
+  --color-paper: #fbf7ee;
+  --color-chili: #ff5a36;
+  --color-veg: #22c55e;
+  --color-nonveg: #e5484d;
+
+  --font-display: "Bricolage Grotesque Variable", ui-sans-serif, system-ui, sans-serif;
+  --font-sans: "Plus Jakarta Sans Variable", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "JetBrains Mono Variable", ui-monospace, monospace;
+  --font-script: "Caveat", cursive;
+
+  --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
+
+  --animate-marquee: marquee var(--marquee-duration, 40s) linear infinite;
+  --animate-spin-slow: spin 14s linear infinite;
+  --animate-shimmer: shimmer 1.6s linear infinite;
+
+  @keyframes marquee {
+    from {
+      transform: translateX(0);
+    }
+    to {
+      transform: translateX(-50%);
+    }
+  }
+  @keyframes shimmer {
+    from {
+      background-position: 200% 0;
+    }
+    to {
+      background-position: -200% 0;
+    }
+  }
+}
+
+:root,
+.theme-dark {
+  --ink-950: #0a0a0a;
+  --ink-900: #111111;
+  --ink-850: #161616;
+  --ink-800: #1c1c1c;
+  --ink-700: #2a2a2a;
+  --cream: #f6f1e7;
+  --edge: #ffffff;
+  --accent: #ffc72c;
+}
+
+:root {
+  color-scheme: dark;
+}
+
+:root[data-theme="light"] {
+  color-scheme: light;
+  --ink-950: #f6f2e9;
+  --ink-900: #ffffff;
+  --ink-850: #f0ebe0;
+  --ink-800: #e8e1d2;
+  --ink-700: #d8cfbd;
+  --cream: #1b1712;
+  --edge: #3a2e1a;
+  --accent: #8a5a00;
+}
+
+/* Re-declared after the light block so dark islands win inside a light page. */
+:root[data-theme="light"] .theme-dark {
+  --ink-950: #0a0a0a;
+  --ink-900: #111111;
+  --ink-850: #161616;
+  --ink-800: #1c1c1c;
+  --ink-700: #2a2a2a;
+  --cream: #f6f1e7;
+  --edge: #ffffff;
+  --accent: #ffc72c;
+}
+
+@layer base {
+  html {
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  body {
+    @apply bg-ink-950 font-sans text-cream antialiased;
+    font-feature-settings: "ss01", "cv11";
+    /* Safety net: nothing may widen the page on phones (it breaks fixed drawers/bars). */
+    overflow-x: clip;
+  }
+
+  ::selection {
+    @apply bg-brand text-coal;
+  }
+
+  :focus-visible {
+    @apply outline-2 outline-offset-2 outline-accent;
+  }
+
+  button {
+    cursor: pointer;
+  }
+}
+
+@utility container-x {
+  @apply mx-auto w-full max-w-7xl px-4 sm:px-6 lg:px-8;
+}
+
+@utility grid-bg {
+  background-image:
+    linear-gradient(to right, color-mix(in srgb, var(--edge) 5%, transparent) 1px, transparent 1px),
+    linear-gradient(to bottom, color-mix(in srgb, var(--edge) 5%, transparent) 1px, transparent 1px);
+  background-size: 56px 56px;
+}
+
+@utility no-scrollbar {
+  scrollbar-width: none;
+  &::-webkit-scrollbar {
+    display: none;
+  }
+}
+
+/* Loading placeholder sweep */
+@utility skeleton {
+  background: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--edge) 6%, transparent) 0%,
+    color-mix(in srgb, var(--edge) 12%, transparent) 50%,
+    color-mix(in srgb, var(--edge) 6%, transparent) 100%
+  );
+  background-size: 200% 100%;
+  animation: var(--animate-shimmer);
+}
+
+/* Film-grain overlay that sits above everything */
+.grain {
+  pointer-events: none;
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  opacity: 0.06;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+:root[data-theme="light"] .grain {
+  opacity: 0.03;
+}
+
+/* Spotlight card: a radial glow that follows the pointer (vars set from JS) */
+.spotlight {
+  position: relative;
+  isolation: isolate;
+}
+.spotlight::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: inherit;
+  opacity: 0;
+  transition: opacity 0.4s;
+  background: radial-gradient(420px circle at var(--x, 50%) var(--y, 50%), rgb(255 199 44 / 0.13), transparent 60%);
+}
+.spotlight:hover::before {
+  opacity: 1;
+}
+
+/* Receipt paper: zig-zag torn bottom edge */
+.receipt-edge {
+  -webkit-mask: conic-gradient(from -45deg at bottom, #0000, #000 1deg 89deg, #0000 90deg) 50% / 18px 100%;
+  mask: conic-gradient(from -45deg at bottom, #0000, #000 1deg 89deg, #0000 90deg) 50% / 18px 100%;
+}
+
+/* Range slider (budget) — lives inside a .theme-dark section, so --ink-950 is always near-black */
+.range {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 10px;
+  border-radius: 999px;
+  background: linear-gradient(
+    to right,
+    var(--ink-950) 0 var(--fill, 50%),
+    rgb(10 10 10 / 0.15) var(--fill, 50%) 100%
+  );
+  cursor: pointer;
+}
+.range::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 30px;
+  height: 30px;
+  border-radius: 999px;
+  background: var(--ink-950);
+  border: 6px solid var(--color-paper);
+  box-shadow: 0 6px 20px rgb(0 0 0 / 0.35);
+  transition: transform 0.2s var(--ease-out-expo);
+}
+.range::-moz-range-thumb {
+  width: 18px;
+  height: 18px;
+  border-radius: 999px;
+  background: var(--ink-950);
+  border: 6px solid var(--color-paper);
+  box-shadow: 0 6px 20px rgb(0 0 0 / 0.35);
+}
+.range:active::-webkit-slider-thumb {
+  transform: scale(1.15);
+}
+.range:focus-visible {
+  outline: 2px solid var(--ink-950);
+  outline-offset: 6px;
+}
+
+/* cmdk */
+[cmdk-item][data-selected="true"] {
+  background: color-mix(in srgb, var(--edge) 7%, transparent);
+}
+[cmdk-item][data-selected="true"] .cmdk-enter {
+  opacity: 1;
+}
+[cmdk-group-heading] {
+  @apply px-3 pt-3 pb-1.5 font-mono text-[11px] tracking-widest text-cream/40 uppercase;
+}
+
+/* Theme switch uses a View Transition; we animate the new snapshot with a clip-path from JS. */
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation: none;
+  mix-blend-mode: normal;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-marquee,
+  .animate-spin-slow {
+    animation: none;
+  }
+}

@@ -1,0 +1,34 @@
+Techie's Taste - image credits
+=============================
+All images were cropped to 4:5 portrait and resized to 900x1125 JPG.
+
+Licences:
+- Pexels photos: Pexels License (https://www.pexels.com/license/). Free for commercial
+  and personal use. Attribution is not required but is appreciated.
+- egg-bhurji.jpg: Wikimedia Commons / Flickr, CC BY 2.0
+  (https://creativecommons.org/licenses/by/2.0/). ATTRIBUTION IS REQUIRED. Show the
+  credit line below somewhere on the site, for example in the footer or a credits page.
+
+File               | Source page                                                                                          | Photographer
+-------------------|------------------------------------------------------------------------------------------------------|----------------------
+burger.jpg         | https://www.pexels.com/photo/gourmet-veggie-burger-with-cheese-and-lettuce-28636771/                 | Animesh Paul (Pexels)
+chowmein.jpg       | https://www.pexels.com/photo/white-ceramic-bowl-with-pasta-dish-3926135/                             | Bishop Tamrakar (Pexels)
+momos.jpg          | https://www.pexels.com/photo/delicious-steamed-momos-with-spicy-chutney-33384415/                    | Shyam Srivastava / श्याम श्रीवास्तव (Pexels)
+fried-momos.jpg    | https://www.pexels.com/photo/crispy-cheese-corn-momos-with-tangy-sauce-28445591/                     | Aperture Photography (Pexels)
+roll.jpg           | https://www.pexels.com/photo/close-up-shot-a-wrap-12737663/                                          | Dhiraj Jain (Pexels)
+chilli-potato.jpg  | https://www.pexels.com/photo/top-view-of-delicious-food-on-a-white-plate-8601177/                    | Lalit Bali (Pexels)
+parantha.jpg       | https://www.pexels.com/photo/delicious-indian-paratha-with-condiments-33428723/                      | Anil Sharma (Pexels)
+egg-bhurji.jpg     | https://commons.wikimedia.org/wiki/File:Spicy_egg_bhurji_@_the_eggfactory.jpg                        | Praveen (Flickr: h0lydevil), CC BY 2.0
+                   | (original: https://www.flickr.com/photos/praveenpn4u/5572083738/)                                    |
+omelette.jpg       | https://www.pexels.com/photo/egg-and-bread-on-plate-20422125/                                        | Jack Baghel (Pexels)
+sandwich.jpg       | https://www.pexels.com/photo/toasted-sandwiches-on-black-ceramic-plate-9240536/                      | Akil Vignesh Jr (Pexels)
+maggi.jpg          | https://www.pexels.com/photo/bowl-of-spicy-instant-noodles-with-chopsticks-30506297/                 | Gundula Vogel (Pexels)
+fries.jpg          | https://www.pexels.com/photo/crispy-french-fries-with-ketchup-on-plate-39799181/                     | Jahra Tasfia Reza (Pexels)
+fried-rice.jpg     | https://www.pexels.com/photo/healthy-mixed-veg-fried-rice-in-wooden-bowl-35588196/                   | Rahul Sonawane (Pexels)
+chilli-paneer.jpg  | https://www.pexels.com/photo/spicy-indo-chinese-chili-paneer-on-plate-29631468/                      | Kunal Lakhotia (Pexels)
+patties.jpg        | https://www.pexels.com/photo/food-on-wooden-tray-8356377/                                            | Saveurs Secretes (Pexels)
+manchurian.jpg     | https://www.pexels.com/photo/delicious-plate-of-indo-chinese-manchurian-balls-28674530/              | Kunal Lakhotia (Pexels)
+
+Required attribution line for egg-bhurji.jpg (copy as-is):
+  "Spicy egg bhurji @ the eggfactory" by Praveen (h0lydevil), CC BY 2.0
+  (https://creativecommons.org/licenses/by/2.0/), via Wikimedia Commons. Cropped and resized.

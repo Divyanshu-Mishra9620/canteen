@@ -1,0 +1,113 @@
+rules_version = '2';
+
+// Techie's Taste — Firestore security rules.
+// Customers: read menu/categories/settings, create valid orders (not if blocked, not if closed).
+// Owner (UID listed in /admins): everything else.
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isAdmin() {
+      return request.auth != null
+        && exists(/databases/$(database)/documents/admins/$(request.auth.uid));
+    }
+
+    // Owner allow-list. Create these documents by hand in the Firebase console.
+    match /admins/{uid} {
+      allow read: if request.auth != null && request.auth.uid == uid;
+      allow write: if false;
+    }
+
+    match /settings/{docId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    match /categories/{categoryId} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+
+    match /menu/{itemId} {
+      allow read: if true;
+      allow create, delete: if isAdmin();
+      // Customers may only bump `orderCount` (by 1–20) as part of placing an order.
+      allow update: if isOrderCountBump() || isAdmin();
+    }
+
+    function isOrderCountBump() {
+      let before = resource.data.get('orderCount', 0);
+      let after = request.resource.data.get('orderCount', 0);
+      return request.resource.data.diff(resource.data).affectedKeys().hasOnly(['orderCount'])
+        && after is number && after > before && after <= before + 20;
+    }
+
+    // Document ID = 10-digit mobile number, so order creation can check it with exists().
+    match /blockedUsers/{mobile} {
+      allow read, write: if isAdmin();
+    }
+
+    match /orders/{orderId} {
+      allow read, update, delete: if isAdmin();
+      allow create: if canCreateOrder(orderId);
+    }
+
+    // Hostels we deliver to. Keep in sync with HOSTELS in src/data/site.ts.
+    function isKnownHostel(h) {
+      return h in ['Tagore', 'VS', 'Ambedkar', 'Tilak', 'Ramanujan', 'Raman', 'Subhash',
+                   "New Girl's", 'Sarojini', 'Kalpana', 'Saraswati'];
+    }
+
+    // Canteen at 26.729087, 83.438484 (Plus Code 7MR5PCHQ+J9Q). Keep in sync with SITE.location.
+    // Flat-earth distance (accurate to <1 m at this scale), compared as squares to avoid sqrt.
+    // 520 m = the 500 m radius + slack for rounding of the stored coordinates.
+    function withinDeliveryRadius(loc) {
+      let dy = (loc.lat - 26.729087) * 110799.3;
+      let dx = (loc.lng - 83.438484) * 99491.7;
+      return dx * dx + dy * dy <= 520.0 * 520.0;
+    }
+
+    function isValidLocation(loc) {
+      return loc is map
+        && loc.keys().hasAll(['lat', 'lng', 'accuracy', 'distance'])
+        && loc.keys().hasOnly(['lat', 'lng', 'accuracy', 'distance'])
+        && loc.lat is number && loc.lng is number
+        && loc.accuracy is number && loc.distance is number
+        && withinDeliveryRadius(loc);
+    }
+
+    function canCreateOrder(orderId) {
+      let o = request.resource.data;
+      let s = get(/databases/$(database)/documents/settings/store).data;
+      return isWellFormedOrder(o, orderId)
+        // Hostel from the fixed list, ordered from within 500 m of the canteen.
+        && isKnownHostel(o.customer.hostel)
+        && isValidLocation(o.location)
+        // Blocked numbers can never order (until the owner unblocks them).
+        && !exists(/databases/$(database)/documents/blockedUsers/$(o.customer.mobile))
+        // Owner's open/closed switch.
+        && s.isOpen == true
+        // Delivery rule: below the threshold pays the charge, at/above it is free.
+        && ((o.subtotal >= s.freeDeliveryThreshold && o.deliveryCharge == 0)
+            || (o.subtotal < s.freeDeliveryThreshold && o.deliveryCharge == s.deliveryCharge));
+    }
+
+    function isWellFormedOrder(o, orderId) {
+      let keys = ['orderId', 'customer', 'note', 'items', 'itemCount', 'subtotal', 'deliveryCharge', 'grandTotal', 'location', 'status', 'createdAt'];
+      return o.keys().hasAll(keys) && o.keys().hasOnly(keys)
+        && o.orderId == orderId
+        && o.status == 'New'
+        && o.createdAt == request.time
+        && o.customer.keys().hasOnly(['name', 'mobile', 'hostel', 'room'])
+        && o.customer.name is string && o.customer.name.size() > 0 && o.customer.name.size() <= 60
+        && o.customer.mobile is string && o.customer.mobile.matches('^[6-9][0-9]{9}$')
+        && o.customer.hostel is string && o.customer.hostel.size() > 0 && o.customer.hostel.size() <= 60
+        && o.customer.room is string && o.customer.room.size() > 0 && o.customer.room.size() <= 20
+        && o.note is string && o.note.size() <= 300
+        && o.items is list && o.items.size() > 0 && o.items.size() <= 40
+        && o.itemCount is number && o.itemCount > 0
+        && o.subtotal is number && o.subtotal > 0
+        && o.deliveryCharge is number && o.deliveryCharge >= 0
+        && o.grandTotal == o.subtotal + o.deliveryCharge;
+    }
+  }
+}
