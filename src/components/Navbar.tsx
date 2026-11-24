@@ -1,20 +1,44 @@
 import { useEffect, useRef, useState } from "react";
-import { AnimatePresence, motion, useMotionValueEvent, useScroll } from "motion/react";
-import { ArrowLeft, ChefHat, Menu as MenuIcon, Search, ShoppingBag, X } from "lucide-react";
+import {
+  AnimatePresence,
+  motion,
+  useMotionValueEvent,
+  useScroll,
+} from "motion/react";
+import {
+  ArrowLeft,
+  ChefHat,
+  Menu as MenuIcon,
+  Search,
+  ShoppingBag,
+  X,
+} from "lucide-react";
 import { useStore } from "../context/store";
 import { ThemeToggle } from "../context/theme";
 import { cn } from "../lib/utils";
 
 const LINKS = [
   { id: "menu", label: "Menu" },
-  { id: "signature", label: "Picks" },
+  // { id: "signature", label: "Picks" },
   { id: "planner", label: "Budget" },
   { id: "visit", label: "Visit" },
 ];
 
-export function Logo({ className, compact }: { className?: string; compact?: boolean }) {
+export function Logo({
+  className,
+  compact,
+}: {
+  className?: string;
+  compact?: boolean;
+}) {
   return (
-    <span className={cn("flex min-w-0 items-center", compact ? "gap-2 sm:gap-2.5" : "gap-2.5", className)}>
+    <span
+      className={cn(
+        "flex min-w-0 items-center",
+        compact ? "gap-2 sm:gap-2.5" : "gap-2.5",
+        className,
+      )}
+    >
       <span
         className={cn(
           "grid shrink-0 place-items-center rounded-xl bg-brand text-coal shadow-[0_0_24px_-4px] shadow-brand/60",
@@ -23,7 +47,12 @@ export function Logo({ className, compact }: { className?: string; compact?: boo
       >
         <ChefHat className="size-5" strokeWidth={2.2} />
       </span>
-      <span className={cn("truncate font-display leading-none font-bold tracking-tight whitespace-nowrap", compact ? "text-[15px] sm:text-lg" : "text-lg")}>
+      <span
+        className={cn(
+          "truncate font-display leading-none font-bold tracking-tight whitespace-nowrap",
+          compact ? "text-[15px] sm:text-lg" : "text-lg",
+        )}
+      >
         Techie's <span className="text-accent">Taste</span>
       </span>
     </span>
@@ -31,7 +60,15 @@ export function Logo({ className, compact }: { className?: string; compact?: boo
 }
 
 /** Live search bound to the menu. Typing jumps to the menu so results are visible. */
-function SearchField({ autoFocus, className, onEscape }: { autoFocus?: boolean; className?: string; onEscape?: () => void }) {
+function SearchField({
+  autoFocus,
+  className,
+  onEscape,
+}: {
+  autoFocus?: boolean;
+  className?: string;
+  onEscape?: () => void;
+}) {
   const { query, setQuery, setMenuCategory, scrollTo } = useStore();
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -40,7 +77,12 @@ function SearchField({ autoFocus, className, onEscape }: { autoFocus?: boolean; 
   }, [autoFocus]);
 
   return (
-    <label className={cn("relative flex h-10 items-center gap-2 rounded-full border border-edge/10 bg-edge/[0.04] pr-1.5 pl-3 transition focus-within:border-brand/60", className)}>
+    <label
+      className={cn(
+        "relative flex h-10 items-center gap-2 rounded-full border border-edge/10 bg-edge/[0.04] pr-1.5 pl-3 transition focus-within:border-brand/60",
+        className,
+      )}
+    >
       <Search className="size-4 shrink-0 text-cream/45" />
       <span className="sr-only">Search dishes or categories</span>
       <input
@@ -67,7 +109,12 @@ function SearchField({ autoFocus, className, onEscape }: { autoFocus?: boolean; 
         className="min-w-0 flex-1 bg-transparent text-sm outline-none placeholder:text-cream/35 [&::-webkit-search-cancel-button]:hidden"
       />
       {query && (
-        <button type="button" onClick={() => setQuery("")} aria-label="Clear search" className="grid size-7 shrink-0 place-items-center rounded-full text-cream/50 hover:bg-edge/10 hover:text-cream">
+        <button
+          type="button"
+          onClick={() => setQuery("")}
+          aria-label="Clear search"
+          className="grid size-7 shrink-0 place-items-center rounded-full text-cream/50 hover:bg-edge/10 hover:text-cream"
+        >
           <X className="size-3.5" />
         </button>
       )}
@@ -88,7 +135,8 @@ export function Navbar() {
 
   useEffect(() => {
     const io = new IntersectionObserver(
-      (entries) => entries.forEach((e) => e.isIntersecting && setActive(e.target.id)),
+      (entries) =>
+        entries.forEach((e) => e.isIntersecting && setActive(e.target.id)),
       { rootMargin: "-45% 0px -50% 0px" },
     );
     LINKS.forEach(({ id }) => {
@@ -126,18 +174,41 @@ export function Navbar() {
                 animate={{ opacity: 1, x: 0 }}
                 exit={{ opacity: 0, x: 24 }}
               >
-                <button type="button" onClick={() => setMobileSearch(false)} aria-label="Close search" className="grid size-10 shrink-0 place-items-center rounded-full text-cream/70">
+                <button
+                  type="button"
+                  onClick={() => setMobileSearch(false)}
+                  aria-label="Close search"
+                  className="grid size-10 shrink-0 place-items-center rounded-full text-cream/70"
+                >
                   <ArrowLeft className="size-5" />
                 </button>
-                <SearchField autoFocus className="flex-1" onEscape={() => setMobileSearch(false)} />
+                <SearchField
+                  autoFocus
+                  className="flex-1"
+                  onEscape={() => setMobileSearch(false)}
+                />
               </motion.div>
             ) : (
-              <motion.div key="bar" className="flex min-w-0 flex-1 items-center gap-2" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
-                <button type="button" onClick={() => go("top")} aria-label="Back to top" className="min-w-0">
+              <motion.div
+                key="bar"
+                className="flex min-w-0 flex-1 items-center gap-2"
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+              >
+                <button
+                  type="button"
+                  onClick={() => go("top")}
+                  aria-label="Back to top"
+                  className="min-w-0"
+                >
                   <Logo compact />
                 </button>
 
-                <ul className="ml-2 hidden items-center lg:flex" onMouseLeave={() => setHovered(null)}>
+                <ul
+                  className="ml-2 hidden items-center lg:flex"
+                  onMouseLeave={() => setHovered(null)}
+                >
                   {LINKS.map((link) => (
                     <li key={link.id} className="relative">
                       <button
@@ -146,13 +217,23 @@ export function Navbar() {
                         onClick={() => go(link.id)}
                         className={cn(
                           "relative z-10 px-3.5 py-2 text-sm font-medium transition-colors",
-                          pillTarget === link.id ? "text-coal" : "text-cream/70 hover:text-cream",
+                          pillTarget === link.id
+                            ? "text-coal"
+                            : "text-cream/70 hover:text-cream",
                         )}
                       >
                         {link.label}
                       </button>
                       {pillTarget === link.id && (
-                        <motion.span layoutId="nav-pill" className="absolute inset-0 rounded-full bg-brand" transition={{ type: "spring", stiffness: 420, damping: 34 }} />
+                        <motion.span
+                          layoutId="nav-pill"
+                          className="absolute inset-0 rounded-full bg-brand"
+                          transition={{
+                            type: "spring",
+                            stiffness: 420,
+                            damping: 34,
+                          }}
+                        />
                       )}
                     </li>
                   ))}
@@ -184,7 +265,11 @@ export function Navbar() {
                         initial={{ scale: 0.4, opacity: 0 }}
                         animate={{ scale: 1, opacity: 1 }}
                         exit={{ scale: 0.4, opacity: 0 }}
-                        transition={{ type: "spring", stiffness: 600, damping: 20 }}
+                        transition={{
+                          type: "spring",
+                          stiffness: 600,
+                          damping: 20,
+                        }}
                         className="grid h-5 min-w-5 place-items-center rounded-full bg-coal px-1 text-[11px] text-brand tabular-nums"
                       >
                         {count}
@@ -199,7 +284,11 @@ export function Navbar() {
                     aria-label={mobileOpen ? "Close menu" : "Open menu"}
                     aria-expanded={mobileOpen}
                   >
-                    {mobileOpen ? <X className="size-5" /> : <MenuIcon className="size-5" />}
+                    {mobileOpen ? (
+                      <X className="size-5" />
+                    ) : (
+                      <MenuIcon className="size-5" />
+                    )}
                   </button>
                 </div>
               </motion.div>
@@ -225,17 +314,25 @@ export function Navbar() {
                     onClick={() => go(link.id)}
                     initial={{ y: "100%" }}
                     animate={{ y: 0 }}
-                    transition={{ delay: 0.2 + i * 0.06, duration: 0.6, ease: [0.16, 1, 0.3, 1] }}
+                    transition={{
+                      delay: 0.2 + i * 0.06,
+                      duration: 0.6,
+                      ease: [0.16, 1, 0.3, 1],
+                    }}
                     className="flex w-full items-baseline gap-4 py-1 text-left font-display text-5xl font-bold"
                   >
-                    <span className="font-mono text-sm text-accent">0{i + 1}</span>
+                    <span className="font-mono text-sm text-accent">
+                      0{i + 1}
+                    </span>
                     {link.label}
                   </motion.button>
                 </li>
               ))}
             </ul>
             <div className="mt-10 flex items-center justify-between">
-              <p className="font-script text-2xl text-accent">Eat • Relax • Repeat</p>
+              <p className="font-script text-2xl text-accent">
+                Eat • Relax • Repeat
+              </p>
               <span className="flex items-center gap-3 text-sm text-cream/60">
                 Theme <ThemeToggle />
               </span>
