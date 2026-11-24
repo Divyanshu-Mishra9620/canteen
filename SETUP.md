@@ -89,7 +89,7 @@ A website can't see inside WhatsApp, so it can confirm that the customer **opene
 
 `vercel.json` already routes `/admin` and runs the server in Mumbai (`bom1`), next to a Mumbai Atlas cluster. After changing environment variables later, redeploy for them to take effect.
 
-The server code lives in `api/` and `server/`. Vercel turns `api/[...path].ts` into a function that handles every `/api/...` request.
+The server code lives in `api/` and `server/`. `vercel.json` rewrites every `/api/...` request to the single function in `api/index.ts`.
 
 ## 6. How orders are protected
 
@@ -133,7 +133,7 @@ In `src/data/site.ts`: the canteen's address and map link, opening hours (displa
 ```
 ├─ .env · .env.example               Server-only settings (MongoDB, admin login)
 ├─ vercel.json                       Routing + server region
-├─ api/[...path].ts                  Vercel entry: hands every /api request to server/app.ts
+├─ api/index.ts                      Vercel entry: every /api request is rewritten here, then routed by server/app.ts
 ├─ server/
 │  ├─ app.ts                         Router
 │  ├─ public.ts                      Menu, placing orders, WhatsApp confirmation, images

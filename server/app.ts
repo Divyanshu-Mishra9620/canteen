@@ -5,13 +5,17 @@ import { ApiError, sendJson, type Ctx } from "./http.js";
 import * as pub from "./public.js";
 
 /**
- * The whole backend is this one handler, so it runs unchanged on Vercel (api/[...path].ts)
+ * The whole backend is this one handler, so it runs unchanged on Vercel (api/index.ts)
  * and inside the Vite dev server (see vite.config.ts).
  */
 export default async function handler(req: IncomingMessage, res: ServerResponse) {
   try {
     const url = new URL(req.url ?? "/", "http://localhost");
-    const parts = url.pathname.replace(/^\/api\/?/, "").split("/").filter(Boolean).map(decodeURIComponent);
+    // On Vercel, the rewrite in vercel.json passes the original path as ?__path=. Locally it's the URL itself.
+    const rewritten = url.searchParams.get("__path");
+    const rawPath = rewritten !== null ? rewritten : url.pathname.replace(/^\/api\/?/, "");
+    url.searchParams.delete("__path");
+    const parts = rawPath.split("/").filter(Boolean).map(decodeURIComponent);
     const method = (req.method ?? "GET").toUpperCase();
     const ctx: Ctx = { req, res, method, parts, query: url.searchParams };
     await route(ctx);

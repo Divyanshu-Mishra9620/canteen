@@ -5,7 +5,7 @@ import tailwindcss from "@tailwindcss/vite";
 /**
  * Serves the /api backend (server/app.ts) from the Vite dev server, so `npm run dev` runs the
  * whole site on one address. In production the same handler runs as a Vercel function
- * (api/[...path].ts). Reloaded on every request, so server edits apply instantly.
+ * (api/index.ts). Reloaded on every request, so server edits apply instantly.
  */
 function apiDevServer(): Plugin {
   return {
