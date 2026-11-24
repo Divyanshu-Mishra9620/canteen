@@ -1,4 +1,5 @@
 import { MongoClient, type Db } from "mongodb";
+import { readEnv } from "./env.js";
 import { ApiError } from "./http.js";
 
 /**
@@ -7,10 +8,10 @@ import { ApiError } from "./http.js";
  */
 const g = globalThis as unknown as { __ttMongo?: { client: Promise<MongoClient>; uri: string }; __ttIndexed?: boolean };
 
-export const dbName = () => process.env.MONGODB_DB?.trim() || "techies_taste";
+export const dbName = () => readEnv("MONGODB_DB") || "techies_taste";
 
 export async function getDb(): Promise<Db> {
-  const uri = process.env.MONGODB_URI?.trim();
+  const uri = readEnv("MONGODB_URI");
   if (!uri) {
     throw new ApiError(
       503,

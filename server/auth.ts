@@ -1,5 +1,6 @@
 import { createHash, createHmac, timingSafeEqual } from "node:crypto";
 import type { IncomingMessage } from "node:http";
+import { readEnv } from "./env.js";
 import { ApiError, clientIp, isHttps, parseCookies } from "./http.js";
 
 /**
@@ -16,7 +17,7 @@ const sha = (s: string) => createHash("sha256").update(s).digest();
 const safeEqual = (a: string, b: string) => timingSafeEqual(sha(a), sha(b));
 
 function secret() {
-  const s = process.env.SESSION_SECRET?.trim();
+  const s = readEnv("SESSION_SECRET");
   if (!s || s.length < 16) {
     throw new ApiError(503, "setup", "SESSION_SECRET isn't set (use a long random string). See SETUP.md.");
   }
@@ -26,7 +27,7 @@ function secret() {
 const sign = (payload: string) => createHmac("sha256", secret()).update(payload).digest("base64url");
 
 export function adminConfigured() {
-  return Boolean(process.env.ADMIN_EMAIL?.trim() && process.env.ADMIN_PASSWORD && process.env.SESSION_SECRET?.trim());
+  return Boolean(readEnv("ADMIN_EMAIL") && readEnv("ADMIN_PASSWORD") && readEnv("SESSION_SECRET"));
 }
 
 /* Best-effort brute-force brake: per instance + per IP. (Serverless instances reset, so the
@@ -46,8 +47,8 @@ export function checkCredentials(req: IncomingMessage, email: string, password: 
   if ((failures.get(ip)?.count ?? 0) >= MAX_FAILURES) {
     throw new ApiError(429, "rate_limited", "Too many attempts. Try again in a few minutes.");
   }
-  const okEmail = safeEqual(email.trim().toLowerCase(), process.env.ADMIN_EMAIL!.trim().toLowerCase());
-  const okPass = safeEqual(password, process.env.ADMIN_PASSWORD!);
+  const okEmail = safeEqual(email.trim().toLowerCase(), readEnv("ADMIN_EMAIL").toLowerCase());
+  const okPass = safeEqual(password, readEnv("ADMIN_PASSWORD"));
   const ok = okEmail && okPass;
   if (!ok) {
     const cur = failures.get(ip);
