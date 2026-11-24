@@ -1,10 +1,12 @@
-import type { FirestoreError } from "firebase/firestore";
-import { DEFAULT_SETTINGS, type Settings } from "../data/menu";
-import { HOSTELS, SITE } from "../data/site";
-import { isFirebaseConfigured } from "./firebase-config";
+import type { Settings } from "../data/menu";
+import { SITE } from "../data/site";
+import { getDelivery, isKnownHostel, isValidMobile, normalizeMobile } from "../../shared/rules";
+import { ApiError, api } from "./api";
 import { formatDistance, mapLinkFor, type CustomerLocation } from "./location";
-import { toSettings } from "./normalize";
 import { rupee } from "./utils";
+
+// The rules live in shared/rules.ts so the website and the server always agree.
+export { getDelivery, isKnownHostel, isValidMobile, normalizeMobile };
 
 export interface CustomerDetails {
   name: string;
@@ -30,14 +32,12 @@ export interface PlacedOrder {
   subtotal: number;
   deliveryCharge: number;
   grandTotal: number;
-  /** Where the customer ordered from (required for saved orders; checked by the rules). */
+  /** Where the customer ordered from (checked again on the server). */
   location: CustomerLocation | null;
   createdAt: Date;
 }
 
-export const isKnownHostel = (hostel: string) => (HOSTELS as readonly string[]).includes(hostel);
-
-export type OrderErrorCode = "blocked" | "closed" | "setup" | "network";
+export type OrderErrorCode = "blocked" | "closed" | "setup" | "network" | "range" | "stock" | "limit" | "invalid" | "location";
 
 export class OrderError extends Error {
   code: OrderErrorCode;
@@ -47,24 +47,10 @@ export class OrderError extends Error {
   }
 }
 
-/** Delivery rule: below the threshold costs `deliveryCharge`, at/above it is free. */
-export function getDelivery(subtotal: number, settings: Settings) {
-  const threshold = settings.freeDeliveryThreshold;
-  const isFree = subtotal >= threshold;
-  return {
-    charge: subtotal === 0 || isFree ? 0 : settings.deliveryCharge,
-    isFree,
-    remaining: Math.max(0, threshold - subtotal),
-    progress: threshold > 0 ? Math.min(1, subtotal / threshold) : 1,
-  };
-}
-
-/** Accepts "+91 98765 43210", "098765..." etc. and returns the bare 10 digits. */
-export const normalizeMobile = (raw: string) => raw.replace(/\D/g, "").replace(/^(?:91|0)(?=\d{10}$)/, "");
-export const isValidMobile = (mobile: string) => /^[6-9]\d{9}$/.test(mobile);
-
 export const whatsappTo = (number10: string, text: string) =>
   `https://wa.me/91${normalizeMobile(number10)}?text=${encodeURIComponent(text)}`;
+
+/* ───────── Remembered details (a convenience only: orders live in the database) ───────── */
 
 const CUSTOMER_KEY = "techies-taste:customer";
 
@@ -87,25 +73,9 @@ export function saveCustomer(details: CustomerDetails) {
   }
 }
 
-class TimeoutError extends Error {}
+/* ───────── Placing an order ───────── */
 
-function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => reject(new TimeoutError()), ms);
-    promise.then(
-      (value) => {
-        clearTimeout(timer);
-        resolve(value);
-      },
-      (error) => {
-        clearTimeout(timer);
-        reject(error);
-      },
-    );
-  });
-}
-
-/** Builds the order summary; `orderId` is empty for WhatsApp-only fallbacks. */
+/** Builds the order summary locally: used for the WhatsApp-only fallback when the server is down. */
 export function draftOrder(
   input: { customer: CustomerDetails; note: string; lines: OrderLine[]; location?: CustomerLocation | null },
   settings: Settings,
@@ -127,91 +97,97 @@ export function draftOrder(
   };
 }
 
-function newOrderId() {
-  const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-  const bytes = crypto.getRandomValues(new Uint8Array(6));
-  return `TT-${Array.from(bytes, (b) => alphabet[b % alphabet.length]).join("")}`;
+export interface PlaceResult {
+  order: PlacedOrder;
+  /** Secret that lets this browser (only) confirm the WhatsApp step for this order. */
+  confirmToken: string;
+  whatsappNumber: string;
 }
 
-/**
- * Saves the order to Firestore (status "New") and bumps each item's orderCount in the same
- * atomic batch. Firestore rules reject the whole batch if the mobile number is blocked or
- * the canteen is closed, so a blocked user can never create an order, even with a modified client.
- */
+const SERVER_CODES: Record<string, OrderErrorCode> = {
+  closed: "closed",
+  blocked: "blocked",
+  range: "range",
+  location: "location",
+  stock: "stock",
+  limit: "limit",
+  invalid: "invalid",
+  setup: "setup",
+};
+
+/** Sends the order to the server, which re-checks everything and prices it from the database. */
 export async function placeOrder(input: {
   customer: CustomerDetails;
   note: string;
   lines: OrderLine[];
-  /** Verified to be inside the delivery radius (the rules check it again). */
   location: CustomerLocation;
-  /** Only bump counts when the menu really lives in Firestore (not the bundled fallback). */
-  bumpCounts: boolean;
-}): Promise<{ order: PlacedOrder; saved: boolean }> {
-  const build = (settings: Settings) => draftOrder(input, settings, newOrderId());
-
-  // Demo mode: no backend configured. Nothing is saved; the WhatsApp hand-off still works.
-  if (!isFirebaseConfigured) return { order: build(DEFAULT_SETTINGS), saved: false };
-
-  // Firestore is loaded on demand so it never weighs down the first page load.
-  const [{ db }, { doc, getDoc, increment, serverTimestamp, writeBatch }] = await Promise.all([
-    import("./firebase"),
-    import("firebase/firestore"),
-  ]).catch(() => {
-    throw new OrderError("network", "Couldn't reach the canteen. Check your internet and try again.");
-  });
-  if (!db) return { order: build(DEFAULT_SETTINGS), saved: false };
-
-  // 1. Fresh settings: the authoritative open/closed flag and delivery rule.
-  const settingsRef = doc(db, "settings", "store");
-  let snap;
+}): Promise<PlaceResult> {
   try {
-    // Unreachable/uncreated databases make the SDK retry forever, so cap the wait.
-    snap = await withTimeout(getDoc(settingsRef), 12_000);
-  } catch {
-    throw new OrderError("network", "Couldn't reach the canteen right now. Check your internet, or send your order on WhatsApp.");
-  }
-  if (!snap.exists()) throw new OrderError("setup", "Online ordering isn't set up yet. Please order on WhatsApp.");
-  const settings = toSettings(snap.data());
-  if (!settings.isOpen) throw new OrderError("closed", "The canteen is closed right now. You can browse, but ordering is paused.");
-
-  // 2. Order + orderCount bumps, all or nothing.
-  const order = build(settings);
-  const batch = writeBatch(db);
-  batch.set(doc(db, "orders", order.orderId), {
-    orderId: order.orderId,
-    customer: order.customer,
-    note: order.note,
-    items: order.items,
-    itemCount: order.itemCount,
-    subtotal: order.subtotal,
-    deliveryCharge: order.deliveryCharge,
-    grandTotal: order.grandTotal,
-    location: input.location,
-    status: "New",
-    createdAt: serverTimestamp(),
-  });
-  if (input.bumpCounts) {
-    for (const line of input.lines) batch.update(doc(db, "menu", line.id), { orderCount: increment(line.qty) });
-  }
-
-  try {
-    await withTimeout(batch.commit(), 20_000);
+    const result = await api<{
+      order: Omit<PlacedOrder, "createdAt"> & { createdAt: string };
+      confirmToken: string;
+      whatsappNumber: string;
+    }>("/api/orders", {
+      method: "POST",
+      timeoutMs: 20_000,
+      body: {
+        customer: input.customer,
+        note: input.note,
+        items: input.lines.map((l) => ({ id: l.id, qty: l.qty })),
+        location: input.location,
+      },
+    });
+    return { ...result, order: { ...result.order, createdAt: new Date(result.order.createdAt) } };
   } catch (err) {
-    if (err instanceof TimeoutError) {
-      // The SDK may still deliver the write later, so steer away from placing a duplicate.
-      throw new OrderError("network", "We couldn't confirm your order. Your connection seems slow, so send it on WhatsApp instead of placing it again.");
+    if (err instanceof ApiError) {
+      const code = SERVER_CODES[err.code];
+      // "setup" is a message for the owner (missing MONGODB_URI...); customers get plain words.
+      if (code === "setup") throw new OrderError("setup", "Online ordering isn't available yet. You can send your order straight to the canteen on WhatsApp instead.");
+      if (code) throw new OrderError(code, err.message);
+      // Server or database trouble, or no backend at all: offer the WhatsApp fallback.
+      throw new OrderError("network", "We couldn't place your order online right now. You can send it straight to the canteen on WhatsApp instead.");
     }
-    if ((err as FirestoreError).code === "permission-denied") {
-      // Hostel and distance are checked before we get here, so a denial means closed or blocked.
-      const again = await getDoc(settingsRef).catch(() => null);
-      if (again && !toSettings(again.data()).isOpen) {
-        throw new OrderError("closed", "The canteen just closed. Ordering is paused.");
-      }
-      throw new OrderError("blocked", "Aap order nahi kar sakte. Canteen se contact karein.");
-    }
-    throw new OrderError("network", "Couldn't place the order. Check your internet and try again.");
+    throw err;
   }
-  return { order, saved: true };
+}
+
+/* ───────── WhatsApp step (compulsory) ───────── */
+
+/** Tells the server the customer tapped "Send order on WhatsApp". Survives the page navigating away. */
+export const confirmWhatsapp = (orderId: string, token: string) =>
+  api(`/api/orders/${encodeURIComponent(orderId)}/whatsapp`, { method: "POST", body: { token }, keepalive: true });
+
+/**
+ * An order stays "pending" on this device until its WhatsApp message has been opened, so a closed
+ * tab or reload can't skip the step: the checkout comes back on the next visit.
+ */
+export interface PendingOrder {
+  order: PlacedOrder;
+  confirmToken: string;
+  whatsappNumber: string;
+  /** WhatsApp was opened, but the server hasn't acknowledged it yet. */
+  tapped: boolean;
+}
+
+const PENDING_KEY = "techies-taste:pending-order";
+
+export function loadPending(): PendingOrder | null {
+  try {
+    const raw = JSON.parse(localStorage.getItem(PENDING_KEY) ?? "null") as (Omit<PendingOrder, "order"> & { order: Omit<PlacedOrder, "createdAt"> & { createdAt: string } }) | null;
+    if (!raw?.order?.orderId || !raw.confirmToken) return null;
+    return { ...raw, order: { ...raw.order, createdAt: new Date(raw.order.createdAt) } };
+  } catch {
+    return null;
+  }
+}
+
+export function savePending(pending: PendingOrder | null) {
+  try {
+    if (pending) localStorage.setItem(PENDING_KEY, JSON.stringify(pending));
+    else localStorage.removeItem(PENDING_KEY);
+  } catch {
+    /* ignore */
+  }
 }
 
 /** Pre-filled WhatsApp text the customer sends to the owner. */

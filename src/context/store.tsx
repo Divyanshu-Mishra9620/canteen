@@ -2,7 +2,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import { useLenis } from "lenis/react";
 import { toast } from "sonner";
 import { DEFAULT_SETTINGS, SEED_CATEGORIES, SEED_MENU, type Category, type MenuItem, type Settings } from "../data/menu";
-import { isFirebaseConfigured } from "../lib/firebase-config";
+import { api } from "../lib/api";
 import { getDelivery } from "../lib/orders";
 import { rupee } from "../lib/utils";
 
@@ -10,14 +10,16 @@ type Lines = Record<string, number>;
 export type CategoryFilter = string | "all";
 
 interface StoreValue {
-  /* Live data (Firestore, or the bundled defaults until/unless it's available) */
+  /* Live data from the database (or the bundled defaults if the server can't be reached) */
   menu: MenuItem[];
   categories: Category[];
   settings: Settings;
   itemById: Record<string, MenuItem>;
   menuStatus: "loading" | "ready";
-  /** "firestore" once the real menu has loaded; "seed" when showing the bundled defaults. */
-  menuSource: "firestore" | "seed";
+  /** "api" once the real menu has loaded; "seed" when showing the bundled defaults. */
+  menuSource: "api" | "seed";
+  /** Re-fetches the menu now (e.g. after the server says an item is out of stock). */
+  refreshMenu: () => Promise<void>;
 
   /* Cart */
   lines: Lines;
@@ -46,8 +48,8 @@ interface StoreValue {
 
 const StoreContext = createContext<StoreValue | null>(null);
 const CART_KEY = "techies-taste:cart";
-/** If Firestore hasn't answered by then, show the bundled menu instead of skeletons. */
-const MENU_TIMEOUT_MS = 6000;
+/** How often the menu, prices, stock and open/closed state are re-fetched while the page is open. */
+const REFRESH_MS = 30_000;
 
 function loadCart(): Lines {
   try {
@@ -71,39 +73,34 @@ export function StoreProvider({ children, locked = false }: { children: ReactNod
   const [liveMenu, setLiveMenu] = useState<MenuItem[] | null>(null);
   const [liveCategories, setLiveCategories] = useState<Category[] | null>(null);
   const [settings, setSettings] = useState<Settings>(DEFAULT_SETTINGS);
-  const [menuStatus, setMenuStatus] = useState<"loading" | "ready">(isFirebaseConfigured ? "loading" : "ready");
+  const [menuStatus, setMenuStatus] = useState<"loading" | "ready">("loading");
 
-  useEffect(() => {
-    if (!isFirebaseConfigured) return;
-    const timeout = setTimeout(() => setMenuStatus("ready"), MENU_TIMEOUT_MS);
-    let unsubscribe: (() => void) | undefined;
-    let cancelled = false;
-    const onError = (err: unknown) => {
-      console.error("Firestore:", err);
+  const refreshMenu = useCallback(async () => {
+    try {
+      const data = await api<{ items: MenuItem[]; categories: Category[]; settings: Settings }>("/api/menu");
+      // An empty menu means the owner deleted everything: show it as empty, not the defaults.
+      setLiveMenu(data.items);
+      setLiveCategories(data.categories);
+      setSettings(data.settings);
+    } catch (err) {
+      // Server or database unreachable: keep whatever we have (the bundled menu on first load).
+      console.warn("Couldn't load the menu from the server:", (err as Error).message);
+    } finally {
       setMenuStatus("ready");
-    };
-    // Loaded on demand (while the splash screen is up) to keep the first bundle small.
-    import("../lib/menu-api")
-      .then(({ subscribePublicData }) => {
-        if (cancelled) return;
-        unsubscribe = subscribePublicData({
-          onMenu: (items) => {
-            // An empty collection means the owner hasn't imported the menu yet: keep the defaults.
-            setLiveMenu(items.length ? items : null);
-            setMenuStatus("ready");
-          },
-          onCategories: (cats) => setLiveCategories(cats.length ? cats : null),
-          onSettings: (s) => setSettings(s),
-          onError,
-        });
-      })
-      .catch(onError);
-    return () => {
-      cancelled = true;
-      clearTimeout(timeout);
-      unsubscribe?.();
-    };
+    }
   }, []);
+
+  // Load now, then keep prices, stock and the open/closed switch fresh.
+  useEffect(() => {
+    void refreshMenu();
+    const timer = setInterval(() => void refreshMenu(), REFRESH_MS);
+    const onVisible = () => document.visibilityState === "visible" && void refreshMenu();
+    document.addEventListener("visibilitychange", onVisible);
+    return () => {
+      clearInterval(timer);
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, [refreshMenu]);
 
   const menu = liveMenu ?? SEED_MENU;
   const categories = useMemo(() => {
@@ -208,7 +205,8 @@ export function StoreProvider({ children, locked = false }: { children: ReactNod
       settings,
       itemById,
       menuStatus,
-      menuSource: liveMenu ? "firestore" : "seed",
+      menuSource: liveMenu ? "api" : "seed",
+      refreshMenu,
       lines,
       items,
       count: items.reduce((sum, l) => sum + l.qty, 0),
@@ -230,7 +228,7 @@ export function StoreProvider({ children, locked = false }: { children: ReactNod
       setQuery,
       scrollTo,
     };
-  }, [menu, categories, settings, itemById, menuStatus, liveMenu, lines, add, setQty, clear, openCart, cartOpen, paletteOpen, filtersOpen, menuCategory, query, scrollTo]);
+  }, [menu, categories, settings, itemById, menuStatus, liveMenu, refreshMenu, lines, add, setQty, clear, openCart, cartOpen, paletteOpen, filtersOpen, menuCategory, query, scrollTo]);
 
   return <StoreContext.Provider value={value}>{children}</StoreContext.Provider>;
 }

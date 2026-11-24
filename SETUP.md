@@ -1,129 +1,118 @@
 # Techie's Taste: setup & deployment
 
-This guide takes the site from your laptop to a live URL with real orders, the owner dashboard (`/admin`) and fake-order blocking.
+This guide takes the site from your laptop to a live URL. Everything is stored in **MongoDB Atlas** (a free cloud database), and a small server inside the project talks to it for the website and the owner dashboard (`/admin`).
 
-**What runs where**
+**What lives where**
 
 | Piece | Where |
 |---|---|
-| Website + admin panel | React (Vite) static site on Vercel or Netlify |
-| Menu, categories, settings, orders, blocked numbers | Cloud Firestore |
-| Owner login | Firebase Authentication (email + password) |
-| Menu photo uploads (optional) | Firebase Storage |
-| Security | `firestore.rules`, `storage.rules` (enforced by Firebase, not the browser) |
+| Menu, categories, settings, orders, blocked numbers, menu photos you upload | **MongoDB** |
+| The cart and remembered name/hostel on a customer's phone | The browser (a convenience only; orders are never stored there) |
+| Owner login | A secure cookie, checked by the server against `ADMIN_EMAIL` / `ADMIN_PASSWORD` |
+| Website + server code | One project, hosted on **Vercel** |
+
+There is no Razorpay or online payment. Customers **pay on delivery**.
 
 ---
 
-## 1. Run it locally
+## 1. Create the database (MongoDB Atlas, free)
+
+1. Sign up at <https://www.mongodb.com/cloud/atlas/register> and create a project.
+2. **Create a cluster → M0 (Free)**. Provider **AWS**, region **Mumbai (ap-south-1)**. Wait ~2 minutes while it is created.
+3. **Database Access → Add New Database User.** Pick a username and a strong password (use letters and digits only to avoid encoding problems). Privileges: *Read and write to any database*.
+4. **Network Access → Add IP Address → Allow access from anywhere (`0.0.0.0/0`)**. Vercel's servers have changing addresses, so this is required. The database user's password is what protects it.
+5. **Database → Connect → Drivers.** Copy the connection string. It looks like:
+
+   ```
+   mongodb+srv://USERNAME:<password>@cluster0.abcde.mongodb.net/?retryWrites=true&w=majority
+   ```
+
+   Replace `<password>` with the real password. If the password contains symbols, URL-encode them (`@` becomes `%40`, `#` becomes `%23`).
+
+## 2. Fill in `.env`
+
+Open `.env` in the project root and set:
+
+```bash
+MONGODB_URI=mongodb+srv://USERNAME:PASSWORD@cluster0.abcde.mongodb.net/?retryWrites=true&w=majority
+MONGODB_DB=techies_taste
+
+ADMIN_EMAIL=you@example.com        # the email you'll type at /admin
+ADMIN_PASSWORD=choose-a-strong-one # the password you'll type at /admin
+
+SESSION_SECRET=...                 # already generated for you; keep it secret
+```
+
+To generate a new session secret: `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"`.
+
+These are **server-only** secrets. They never reach the browser, and `.env` is git-ignored, so never commit it.
+
+## 3. Run it
 
 Requires Node.js 20 or newer.
 
 ```bash
 npm install
-npm run dev            # http://localhost:5173  ·  dashboard: http://localhost:5173/admin
+npm run dev        # http://localhost:5173   ·   owner dashboard: http://localhost:5173/admin
 ```
 
-Without Firebase keys the site still works in **demo mode**. It shows the bundled menu, and checkout goes straight to WhatsApp without saving the order.
+One command starts the website **and** the API. On the very first request the default menu (32 dishes, 6 categories) and settings are created in your database automatically, so there is nothing to import.
 
-## 2. Create the Firebase project and web app
+Sign in at `/admin` with your `ADMIN_EMAIL` and `ADMIN_PASSWORD`. If something is missing in `.env`, the page tells you exactly what.
 
-1. Go to <https://console.firebase.google.com>, then **Add project** (Google Analytics is optional).
-2. **Project settings → General → Your apps → Web (`</>`)**. Register the app; Hosting isn't needed.
-3. Copy `.env.example` to `.env` and paste in the values from the config shown:
+> **Phone testing:** location only works on `https://` or `localhost`. To try the site on a real phone, test the deployed link (step 5).
 
-```bash
-VITE_FIREBASE_API_KEY=...
-VITE_FIREBASE_AUTH_DOMAIN=your-project.firebaseapp.com
-VITE_FIREBASE_PROJECT_ID=your-project
-VITE_FIREBASE_STORAGE_BUCKET=your-project.firebasestorage.app   # only needed for photo uploads (step 7)
-VITE_FIREBASE_MESSAGING_SENDER_ID=...
-VITE_FIREBASE_APP_ID=...
-```
+## 4. Day-to-day use of the dashboard
 
-Restart `npm run dev` after editing `.env`. These keys are safe to ship in a website; access is controlled by the security rules.
-
-## 3. Create the Firestore database
-
-**Build → Firestore Database → Create database.**
-
-- Location: **asia-south1 (Mumbai)** is closest for Indian users. You can't change it later.
-- Start in **production mode** (step 4 replaces the rules anyway).
-
-> Skipping this step makes the site's requests fail with *"Cloud Firestore API has not been used in project … or it is disabled"*, and checkout times out.
-
-## 4. Publish the security rules
-
-Pick one option.
-
-**Option A (Console):** open **Firestore Database → Rules**, replace everything with the contents of `firestore.rules`, then click **Publish**. Repeat this whenever `firestore.rules` changes.
-
-**Option B (CLI):**
-
-```bash
-npm install -g firebase-tools
-firebase login
-firebase use --add          # choose your project
-firebase deploy --only firestore:rules
-```
-
-The rules enforce the following:
-
-- Anyone can read the menu, categories and settings.
-- Customers can create an order only if:
-  - the mobile number is **not** in `blockedUsers`,
-  - the canteen is **open**,
-  - the order has status `New` and a server timestamp,
-  - the name, 10-digit mobile and room are valid, and the hostel is one of the 11 listed,
-  - the order was placed **within 500 m of the canteen** (from the customer's location),
-  - the **delivery charge matches the rule** (₹10 below ₹200, free from ₹200),
-  - the grand total equals item total + delivery.
-- Customers can't read orders, blocked users or anything else. They can only bump a dish's `orderCount` by 1–20 while ordering.
-- Only owner accounts (step 5) can edit the menu, settings and blocked list, or read and update orders.
-
-## 5. Create the owner (admin) login
-
-There is no built-in admin password. You create your own:
-
-1. **Build → Authentication → Get started → Sign-in method → Email/Password → Enable.**
-2. **Authentication → Users → Add user**. Enter the owner's email and a strong password.
-3. Copy the new user's **User UID** from the users table.
-4. **Firestore Database → Data → Start collection**:
-   - Collection ID: `admins`
-   - Document ID: *paste the UID*
-   - Add any field, e.g. `role` (string) = `owner`. Save.
-
-To add another owner later, repeat steps 2–4. To remove one, delete their `admins` document.
-
-If someone signs in with an account that isn't in `admins`, the dashboard shows "Not an admin account" with the UID to add.
-
-## 6. First run of the dashboard
-
-1. Open `/admin` and sign in.
-2. **Menu management → Import default menu.** This writes the 6 categories, all 32 items from the printed menu, and the default settings.
-3. **Settings:** check the owner WhatsApp number (default **6392771136**), the delivery charge (**₹10**) and the free-delivery threshold (**₹200**).
-4. Place a test order from the website (on another phone, or a private window). It appears under **Live orders** instantly, with a chime.
-
-Day-to-day use:
-
-- **Live orders:** move each order through New → Preparing → Ready / Out for delivery → Delivered (or Cancel). Each order has Call, WhatsApp and **Block** buttons. Keep the tab open; click anywhere once so the browser allows the alert sound.
-- **Menu:** add, edit or delete items, toggle **In stock** / **Recommended**, upload photos, and manage categories (add, rename, reorder, or delete when empty).
+- **Live orders** refresh every few seconds, with a sound alert for each new order. Keep the tab open, and tap anywhere once so the browser allows sound. Orders move New → Preparing → Ready / Out for delivery → Delivered (or Cancel). Each card has Call, WhatsApp and **Block** buttons, and a map link showing how far the customer is.
+- **Awaiting WhatsApp:** every order must be sent on WhatsApp by the customer (see below). Until they do, it appears as *Awaiting WhatsApp* and the alert stays silent. When they tap the WhatsApp button, it becomes a normal *New* order and the alert sounds. If you receive the message by other means, use **I got it on WhatsApp: confirm**.
+- **Menu management:** add, edit or delete dishes; **In stock** and **Recommended** switches; upload, replace or remove photos (stored in MongoDB); add, rename, reorder and delete categories.
 - **Blocked users:** blocked numbers can browse but can never place an order until you unblock them.
-- **Open/Closed switch** (top bar): when closed, customers can browse but not order.
-- **Order history:** today's order count, revenue, deliveries and average order value, plus search.
+- **Settings:** delivery charge (₹10), free-delivery threshold (₹200), owner WhatsApp number (7705912905), and the **Open / Closed** switch (top bar): when closed, customers can browse but not order.
+- **Order history:** today's orders and revenue (counting only WhatsApp-confirmed, non-cancelled orders), plus search.
 
-## 7. (Optional) Photo uploads with Firebase Storage
+### How the compulsory WhatsApp step works
 
-Firebase requires the pay-as-you-go **Blaze** plan to create a Storage bucket for new projects; the free monthly allowance still applies. If you'd rather stay on the free plan, skip this section. You can still put photos in `public/images/menu/` and paste their path (e.g. `/images/menu/burger.webp`) into the item's **Image URL** field.
+1. The customer taps **Place order**. The server checks everything and saves it.
+2. A screen says **"One last step"** with a big green **Send Order on WhatsApp** button. The close button, Escape and tapping outside are all disabled until they use it.
+3. If they close the tab or reload before sending, the same screen comes back the next time they open the site.
+4. When they tap the button, WhatsApp opens with the full order written out (ID, items, total, hostel, room, a map link), and the order becomes confirmed in your dashboard.
 
-1. **Build → Storage → Get started** (same region as Firestore).
-2. Set `VITE_FIREBASE_STORAGE_BUCKET` in `.env` (and on Vercel/Netlify).
-3. Publish `storage.rules` (Console → Storage → Rules, or `firebase deploy --only storage`).
+A website can't see inside WhatsApp, so it can confirm that the customer **opened** WhatsApp with the order, not that they pressed Send. If an order's message never reaches you, ask for it before cooking.
 
-Uploads are centre-cropped to a square and compressed to WebP in the browser before upload, so cards stay fast.
+## 5. Deploy on Vercel
 
-## 8. Item photos (AI-generated or your own)
+1. Push the project to GitHub (its own repository, with `package.json` at the root). `.env` is git-ignored, so your secrets stay out of it.
+2. Go to <https://vercel.com/new> and import the repository. Framework preset: **Vite**. Build command `npm run build`, output directory `dist` (the defaults).
+3. Under **Environment Variables**, add the same five values from your `.env`: `MONGODB_URI`, `MONGODB_DB`, `ADMIN_EMAIL`, `ADMIN_PASSWORD`, `SESSION_SECRET`.
+4. Click **Deploy**.
 
-The default menu uses 16 real food photos shared across related dishes. To give **every** dish its own square photo, add these files to `public/images/menu/` (1:1, WebP, under ~150 KB each):
+`vercel.json` already routes `/admin` and runs the server in Mumbai (`bom1`), next to a Mumbai Atlas cluster. After changing environment variables later, redeploy for them to take effect.
+
+The server code lives in `api/` and `server/`. Vercel turns `api/[...path].ts` into a function that handles every `/api/...` request.
+
+## 6. How orders are protected
+
+Every rule is enforced on the **server**, never trusting the browser:
+
+- Prices come from the database (the browser only says which dishes and how many). The delivery fee and total are computed on the server.
+- The hostel must be one of the 11 listed, and the order must be placed **within 500 m of the canteen** (the server measures the distance from the location the phone sends).
+- Blocked numbers, a closed canteen and out-of-stock dishes are refused.
+- A number can place at most 6 orders an hour, and at most 3 that were never sent on WhatsApp.
+- The owner dashboard and every admin action require the signed login cookie (HttpOnly, SameSite=Strict, valid 12 hours).
+
+Things to know:
+
+- **GPS can be faked** with developer tools. The radius check stops normal out-of-area orders, and every order shows its distance with a map link, so block anyone who abuses it.
+- **Updates are polled, not pushed.** The dashboard refreshes orders every ~4 seconds; the public menu refreshes every 30 seconds and when the page comes back into view. Ordering always re-checks everything on the server.
+- **Free tiers have limits.** Atlas M0 holds 512 MB, plenty for a canteen. A Vercel function that hasn't run for a while takes about a second to wake up.
+- **Keep the password strong.** It is the only thing between the internet and your dashboard.
+
+## 7. Item photos
+
+The default menu uses 16 real food photos shared across related dishes (credits in `public/images/CREDITS.txt`). To use a different photo for a dish, open **Menu management → Edit** and **Upload image**. It is cropped to a square, compressed and stored in MongoDB.
+
+To give **every** dish its own bundled photo instead, add square WebP files (under ~150 KB) to `public/images/menu/` named after the dish:
 
 ```
 sandwich  burger  maggi  chowmein  paneer-chowmein  manchurian-chowmein  finger-chips
@@ -133,73 +122,32 @@ egg-roll  paneer-chili-roll  omelette  egg-bhurji  egg-boiled  egg-bread  aloo-p
 paneer-paratha  pyaaz-paratha  dahi-paratha  aloo-patties  paneer-patties
 ```
 
-Each name becomes `<name>.webp`, e.g. `public/images/menu/kurkure-momos.webp`. Then either:
+Then paste `/images/menu/<name>.webp` into each dish's **Image URL** in the dashboard. Missing or broken images fall back to a branded placeholder.
 
-- set `USE_ITEM_PHOTOS = true` in `src/data/menu.ts` **before** importing the default menu, or
-- if the menu is already imported, paste `/images/menu/<name>.webp` into each item's **Image URL** in the dashboard (or upload the file there).
+## 8. Changing fixed details
 
-Missing or broken images fall back to a branded placeholder automatically.
-
-## 9. Deploy
-
-### Vercel
-
-1. Push the project to GitHub (its own repository, with `package.json` at the root).
-2. Go to <https://vercel.com/new>, import the repository. The framework preset should be **Vite**.
-3. Build command `npm run build`, output directory `dist`.
-4. **Environment Variables:** add every `VITE_FIREBASE_*` value from your `.env`.
-5. Deploy. `vercel.json` already makes `/admin` work on refresh.
-
-### Netlify
-
-1. **Add new site → Import from Git**.
-2. Build command `npm run build`, publish directory `dist`.
-3. **Site settings → Environment variables:** add the `VITE_FIREBASE_*` values.
-4. Deploy. `public/_redirects` already handles `/admin`.
-
-### After the first deploy (both hosts)
-
-**Firebase → Authentication → Settings → Authorized domains → Add domain:** add your live domain (e.g. `techies-taste.vercel.app`) or the owner login will be refused.
-
-## 10. (Optional) Test everything locally with emulators
-
-```bash
-firebase emulators:start --only auth,firestore,storage
-# in another terminal:
-VITE_USE_EMULATORS=true npm run dev
-```
-
-Ports are set in `firebase.json` (Firestore 8085, Auth 9099, Storage 9199, UI 4000). Create the owner in the Emulator UI (http://localhost:4000), add `admins/<uid>`, then use `/admin` as in step 6.
-
-firebase-tools v14+ needs **Java 21**. With Java 17, use `npx firebase-tools@13 emulators:start …`.
-
-## 11. Things to know
-
-- **Delivery area and hostels.** Orders need the customer's location, which must be within **500 m** of the canteen (Plus Code 7MR5PCHQ+J9Q, 26.729087, 83.438484). The hostel is picked from a fixed list. Both are checked in the browser **and** by `firestore.rules`. To change the radius, the canteen position or the hostel list, edit `src/data/site.ts` **and** the matching values in `firestore.rules`, then **re-publish the rules** (step 4).
-- **Location needs https.** It works on `localhost` and on the deployed Vercel/Netlify site. Opening the dev server from a phone at `http://192.168.x.x:5173` won't allow location, so test on the phone with the deployed https link.
-- **GPS can be faked** with developer tools. The radius check stops normal out-of-area orders, and every order shows its distance with a map pin in the dashboard, so block anyone who abuses it.
-- **Prices are taken from the customer's browser.** The rules check the delivery charge and totals, but not each item's price against the menu, because that would need a Cloud Function (Blaze plan). The dashboard shows every item and price, so check unusual totals. To harden it later, move order creation into a callable Cloud Function that reads prices from `menu`.
-- **`orderCount` (used for "Popular")** can be bumped by customers in small steps while ordering. That's fine for sorting, but it isn't an audit log.
-- **The blocked check is per mobile number.** Someone could type a different number, but they'd then need to answer calls on it for delivery.
-- **Placeholders to replace:** the address, `mapsUrl` and opening hours in `src/data/site.ts`, and your developer link in `DEVELOPER`.
+In `src/data/site.ts`: the canteen's address and map link, opening hours (display only), the **hostel list**, the canteen's position and the delivery radius (500 m). The server reads the same file, so one edit covers both the website and the checks. Redeploy afterwards.
 
 ## Project structure
 
 ```
-├─ firestore.rules · storage.rules · firebase.json   Security rules + emulator config
-├─ .env.example                                      Firebase keys template
-├─ vercel.json · public/_redirects                   SPA routing for /admin
-├─ public/images/                                    Food photos (+ CREDITS.txt)
+├─ .env · .env.example               Server-only settings (MongoDB, admin login)
+├─ vercel.json                       Routing + server region
+├─ api/[...path].ts                  Vercel entry: hands every /api request to server/app.ts
+├─ server/
+│  ├─ app.ts                         Router
+│  ├─ public.ts                      Menu, placing orders, WhatsApp confirmation, images
+│  ├─ admin.ts                       Owner endpoints: orders, menu, categories, blocked, settings
+│  ├─ auth.ts · http.ts · db.ts      Login cookie, request helpers, MongoDB connection
+│  └─ models.ts                      Data shapes + first-run seeding
+├─ shared/rules.ts                   Delivery fee, mobile and distance rules (used by site and server)
+├─ public/images/                    Food photos (+ CREDITS.txt)
 └─ src/
-   ├─ main.tsx                 Routes "/" → site, "/admin" → dashboard (lazy-loaded)
-   ├─ App.tsx                  Page sections, splash screen, providers
-   ├─ index.css                Tailwind v4 theme: dark/light tokens, utilities
-   ├─ data/menu.ts             Schema + the 32 default items (seed) + default settings
-   ├─ data/site.ts             Address, phone, hours, developer credit
-   ├─ context/store.tsx        Live menu/settings, cart, delivery maths, UI state
-   ├─ context/theme.tsx        Light/dark mode with animated switch
-   ├─ lib/orders.ts            Delivery rule, validation, placeOrder(), WhatsApp message
-   ├─ lib/firebase*.ts         Firebase init (Firestore loaded on demand)
-   ├─ components/              Header, hero, menu (cards, chips, filter sheet), cart & checkout, footer…
-   └─ admin/                   Dashboard: login, live orders, menu, blocked users, settings, history
+   ├─ main.tsx                       "/" → website, "/admin" → dashboard (lazy-loaded)
+   ├─ App.tsx                        Page sections, splash screen, providers
+   ├─ data/menu.ts · data/site.ts    Default menu + fixed business details
+   ├─ context/                       Cart/menu store, light/dark theme
+   ├─ lib/                           API client, order flow (incl. WhatsApp step), location check
+   ├─ components/                    Header, hero, menu, checkout drawer, footer…
+   └─ admin/                         Dashboard: login, live orders, menu, blocked users, settings, history
 ```

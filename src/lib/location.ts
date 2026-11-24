@@ -1,4 +1,5 @@
 import { SITE } from "../data/site";
+import { distanceM } from "../../shared/rules";
 
 /** Fixes worse than this can't tell "inside" from "outside" the radius; ask for precise location. */
 const MAX_ACCURACY_M = 200;
@@ -22,15 +23,6 @@ export type LocationCheck =
   | { status: "imprecise"; accuracy: number }
   | { status: "denied" }
   | { status: "unavailable"; reason: "unsupported" | "insecure" | "timeout" | "error" };
-
-/** Great-circle distance in metres. */
-export function distanceM(lat1: number, lng1: number, lat2: number, lng2: number) {
-  const r = Math.PI / 180;
-  const dLat = (lat2 - lat1) * r;
-  const dLng = (lng2 - lng1) * r;
-  const h = Math.sin(dLat / 2) ** 2 + Math.cos(lat1 * r) * Math.cos(lat2 * r) * Math.sin(dLng / 2) ** 2;
-  return 2 * 6_371_008.8 * Math.asin(Math.sqrt(h));
-}
 
 export const formatDistance = (m: number) => (m < 1000 ? `${Math.round(m)} m` : `${(m / 1000).toFixed(1)} km`);
 

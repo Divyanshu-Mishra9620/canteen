@@ -1,19 +1,20 @@
 /**
  * Static business + developer details. Edit these before publishing.
  * Live, owner-editable values (delivery charge, WhatsApp number, open/closed) live in
- * Firestore `settings/store` and are managed from /admin → Settings.
+ * MongoDB (`settings`) and are managed from /admin → Settings.
  */
 export const SITE = {
   name: "Techie's Taste",
   tagline: "Good Food • Happy Vibes",
-  /** Contact number shown in the footer (tap to call). */
-  phone: "6392771136",
-  address: "UCC (University Canteen Chauraha), Singhariya, Rapti Nagar Phase-4, Gorakhpur 273010",
+  /** Contact number: the footer's Call and WhatsApp chat buttons, and the call button at checkout. */
+  phone: "7705912905",
+  address:
+    "UCC (University Canteen Chauraha), Singhariya, Rapti Nagar Phase-4, Gorakhpur 273010",
   /** Exact pin shared by the owner. Leave empty to search Google Maps for `address`. */
   mapsUrl: "https://maps.app.goo.gl/9CDtxFCPPWWpAAYMA",
   /**
    * Canteen position (Plus Code 7MR5PCHQ+J9Q). Orders are only accepted within `deliveryRadiusM`.
-   * Keep both in sync with `withinDeliveryRadius()` in firestore.rules.
+   * The server (server/public.ts) reads these same values, so there is one place to change them.
    */
   location: { lat: 26.729087, lng: 83.438484 },
   deliveryRadiusM: 500,
@@ -21,7 +22,7 @@ export const SITE = {
   hours: { open: 8, close: 22 },
 };
 
-/** Hostels we deliver to. Keep in sync with the list in firestore.rules. */
+/** Hostels we deliver to. The server validates orders against this same list. */
 export const HOSTELS = [
   "Tagore",
   "VS",
@@ -37,12 +38,14 @@ export const HOSTELS = [
 ] as const;
 
 export const mapsLink = () =>
-  SITE.mapsUrl || `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(SITE.address)}`;
+  SITE.mapsUrl ||
+  `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(SITE.address)}`;
 
 export const DEVELOPER = {
   name: "Divyanshu Mishra",
   firstName: "Divyanshu",
   initials: "DM",
   url: "https://github.com/Divyanshu-Mishra9620",
-  pitch: "I design and build fast, good-looking websites for restaurants, cafés and small businesses.",
+  pitch:
+    "I design and build fast, good-looking websites for restaurants, cafés and small businesses.",
 };

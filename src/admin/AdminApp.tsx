@@ -1,23 +1,23 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { MotionConfig, motion } from "motion/react";
-import { onAuthStateChanged, signInWithEmailAndPassword, signOut, type User } from "firebase/auth";
 import { Ban, BellRing, Eye, EyeOff, ExternalLink, History, LogOut, Settings2, UtensilsCrossed, Volume2, VolumeX } from "lucide-react";
 import { toast } from "sonner";
 import { DEFAULT_SETTINGS, SEED_CATEGORIES, type Category, type MenuItem, type Settings } from "../data/menu";
-import { firebaseConfig, isFirebaseConfigured } from "../lib/firebase-config";
-import { subscribePublicData } from "../lib/menu-api";
+import { ApiError } from "../lib/api";
 import { cn, rupee } from "../lib/utils";
 import { ThemeProvider, ThemeToggle } from "../context/theme";
 import { ThemedToaster } from "../components/ThemedToaster";
 import { Logo } from "../components/Navbar";
 import { Button } from "../components/ui/primitives";
 import {
-  auth,
-  isAdmin,
+  adminLogin,
+  adminLogout,
+  adminSession,
+  onSessionExpired,
   playChime,
   subscribeBlocked,
-  subscribeRecentOrders,
-  subscribeTodayOrders,
+  subscribeMenu,
+  subscribeOrders,
   unlockAudio,
   type AdminOrder,
   type BlockedUser,
@@ -51,38 +51,29 @@ function Centered({ children }: { children: React.ReactNode }) {
   );
 }
 
+type Gate = { state: "loading" } | { state: "signedOut" } | { state: "setup"; message: string } | { state: "admin"; email: string };
+
 function AdminGate() {
-  const [state, setState] = useState<"loading" | "signedOut" | "denied" | "admin">(auth ? "loading" : "signedOut");
-  const [user, setUser] = useState<User | null>(null);
+  const [gate, setGate] = useState<Gate>({ state: "loading" });
 
   useEffect(() => {
-    if (!auth) return;
-    return onAuthStateChanged(auth, async (u) => {
-      setUser(u);
-      if (!u) return setState("signedOut");
-      try {
-        setState((await isAdmin(u.uid)) ? "admin" : "denied");
-      } catch {
-        setState("denied");
-      }
-    });
+    adminSession().then(
+      ({ email }) => setGate({ state: "admin", email }),
+      (err: Error) => {
+        const e = err as ApiError;
+        if (e.status === 401) return setGate({ state: "signedOut" });
+        if (e.code === "no_api") {
+          return setGate({ state: "setup", message: "The ordering server isn't running on this address. Start the site with npm run dev, or deploy it to Vercel (see SETUP.md)." });
+        }
+        setGate({ state: "setup", message: e.message });
+      },
+    );
   }, []);
 
-  if (!isFirebaseConfigured || !auth) {
-    return (
-      <Centered>
-        <Logo />
-        <h1 className="mt-8 font-display text-3xl font-bold">Connect Firebase first</h1>
-        <p className="mt-3 text-cream/60">
-          The admin panel needs a Firebase project. Copy <code className="font-mono text-accent">.env.example</code> to <code className="font-mono text-accent">.env</code>, fill in your keys and restart the dev server. SETUP.md walks through every step.
-        </p>
-        <a href="/" className="mt-6 inline-block text-sm font-semibold text-accent">
-          ← Back to website
-        </a>
-      </Centered>
-    );
-  }
-  if (state === "loading") {
+  // The 12-hour session ended while the dashboard was open.
+  useEffect(() => onSessionExpired(() => setGate({ state: "signedOut" })), []);
+
+  if (gate.state === "loading") {
     return (
       <Centered>
         <div className="flex justify-center">
@@ -91,38 +82,33 @@ function AdminGate() {
       </Centered>
     );
   }
-  if (state === "signedOut") return <Login />;
-  if (state === "denied" && user) {
+  if (gate.state === "setup") {
     return (
       <Centered>
         <Logo />
-        <h1 className="mt-8 font-display text-3xl font-bold">Not an admin account</h1>
-        <p className="mt-3 text-sm text-cream/60">
-          {user.email} is signed in but isn't on the owner list. In Firestore, create a document in the <code className="font-mono text-accent">admins</code> collection with this ID:
+        <h1 className="mt-8 font-display text-3xl font-bold">Almost there</h1>
+        <p className="mt-3 text-cream/60">{gate.message}</p>
+        <p className="mt-3 text-sm text-cream/45">
+          Settings live in <code className="font-mono text-accent">.env</code> (and in the Vercel project settings once deployed). SETUP.md walks through each one.
         </p>
-        <code className="mt-3 block rounded-xl bg-edge/[0.06] p-3 font-mono text-xs break-all select-all">{user.uid}</code>
-        <Button variant="ghost" className="mt-6 w-full" onClick={() => signOut(auth!)}>
-          Sign out
-        </Button>
+        <a href="/" className="mt-6 inline-block text-sm font-semibold text-accent">
+          ← Back to website
+        </a>
       </Centered>
     );
   }
-  return <Dashboard user={user!} />;
+  if (gate.state === "signedOut") return <Login onSignedIn={(email) => setGate({ state: "admin", email })} />;
+  return (
+    <Dashboard
+      email={gate.email}
+      onSignOut={() => {
+        void adminLogout().finally(() => setGate({ state: "signedOut" }));
+      }}
+    />
+  );
 }
 
-/** Human-readable sign-in errors, including the setup mistakes owners actually hit. */
-function signInMessage(code: string) {
-  if (/invalid-credential|wrong-password|user-not-found|invalid-email/.test(code)) return "Wrong email or password.";
-  if (code.includes("too-many-requests")) return "Too many attempts. Try again in a few minutes.";
-  if (code.includes("configuration-not-found"))
-    return `Authentication isn't set up in Firebase project "${firebaseConfig.projectId}". Make sure .env has the config of the project where you added the user.`;
-  if (code.includes("operation-not-allowed")) return "Email/Password sign-in is turned off. Enable it in Firebase → Authentication → Sign-in method.";
-  if (code.includes("api-key")) return "The Firebase API key in .env isn't valid. Copy it again from Project settings.";
-  if (code.includes("network-request-failed")) return "Couldn't reach Firebase. Check your internet connection.";
-  return `Couldn't sign in (${code || "unknown error"}).`;
-}
-
-function Login() {
+function Login({ onSignedIn }: { onSignedIn: (email: string) => void }) {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [show, setShow] = useState(false);
@@ -135,9 +121,11 @@ function Login() {
     setBusy(true);
     setError("");
     try {
-      await signInWithEmailAndPassword(auth!, email.trim(), password);
+      const res = await adminLogin(email.trim(), password);
+      onSignedIn(res.email);
     } catch (err) {
-      setError(signInMessage((err as { code?: string }).code ?? ""));
+      const apiErr = err as ApiError;
+      setError(apiErr.code === "network" ? "Couldn't reach the server. Check your internet connection." : apiErr.message || "Couldn't sign in.");
     } finally {
       setBusy(false);
     }
@@ -149,11 +137,6 @@ function Login() {
         <Logo />
         <h1 className="mt-8 font-display text-3xl font-bold">Owner login</h1>
         <p className="mt-1 text-sm text-cream/55">Manage orders, menu and settings.</p>
-        {import.meta.env.DEV && (
-          <p className="mt-3 font-mono text-[11px] text-cream/40">
-            Firebase project: <span className="text-accent">{firebaseConfig.projectId}</span>
-          </p>
-        )}
         <div className="mt-6 space-y-4">
           <Field label="Email">
             <input className={inputClass} type="email" autoComplete="username" required value={email} onChange={(e) => setEmail(e.target.value)} />
@@ -192,7 +175,7 @@ const TABS: { id: Tab; label: string; short: string; icon: typeof BellRing }[] =
   { id: "history", label: "Order history", short: "History", icon: History },
 ];
 
-function Dashboard({ user }: { user: User }) {
+function Dashboard({ email, onSignOut }: { email: string; onSignOut: () => void }) {
   const [tab, setTab] = useState<Tab>(() => (TABS.some((t) => `#${t.id}` === window.location.hash) ? (window.location.hash.slice(1) as Tab) : "orders"));
   const [menu, setMenu] = useState<MenuItem[]>([]);
   const [liveMenu, setLiveMenu] = useState(false);
@@ -207,6 +190,7 @@ function Dashboard({ user }: { user: User }) {
   const [sound, setSound] = useState(true);
   const soundRef = useRef(sound);
   soundRef.current = sound;
+  /** Orders already known to be confirmed on WhatsApp, so the alert fires once per order. */
   const seen = useRef<Set<string> | null>(null);
 
   useEffect(() => {
@@ -220,22 +204,20 @@ function Dashboard({ user }: { user: User }) {
   }, []);
 
   useEffect(() => {
-    const onError = (e: Error) => toast.error("Live data error", { description: e.message });
+    const onError = (e: Error) => toast.error("Couldn't refresh live data", { description: e.message });
     const unsubs = [
-      subscribePublicData({
-        onMenu: (items) => {
-          setMenu(items);
-          setLiveMenu(items.length > 0);
-          setMenuLoading(false);
-        },
-        onCategories: (c) => setCategories(c.length ? c : SEED_CATEGORIES),
-        onSettings: (s) => setSettings(s),
-        onError,
-      }),
-      subscribeRecentOrders((list) => {
-        // Alert only for orders that arrive after the first snapshot.
+      subscribeMenu((data) => {
+        setMenu(data.items);
+        setLiveMenu(data.items.length > 0);
+        setCategories(data.categories.length ? data.categories : SEED_CATEGORIES);
+        setSettings(data.settings);
+        setMenuLoading(false);
+      }, onError),
+      subscribeOrders(({ recent: list, today: todays }) => {
+        // Alert when an order arrives that the customer has sent on WhatsApp (not at creation).
+        const confirmed = list.filter((o) => o.status === "New" && o.whatsappSentAt);
         if (seen.current) {
-          const fresh = list.filter((o) => o.status === "New" && !seen.current!.has(o.orderId));
+          const fresh = confirmed.filter((o) => !seen.current!.has(o.orderId));
           if (fresh.length) {
             if (soundRef.current) playChime();
             navigator.vibrate?.([200, 100, 200]);
@@ -248,11 +230,11 @@ function Dashboard({ user }: { user: User }) {
             );
           }
         }
-        seen.current = new Set(list.map((o) => o.orderId));
+        seen.current = new Set([...(seen.current ?? []), ...confirmed.map((o) => o.orderId)]);
         setRecent(list);
+        setToday(todays);
         setOrdersLoading(false);
       }, onError),
-      subscribeTodayOrders(setToday, onError),
       subscribeBlocked((list) => {
         setBlocked(list);
         setBlockedLoading(false);
@@ -261,7 +243,8 @@ function Dashboard({ user }: { user: User }) {
     return () => unsubs.forEach((u) => u());
   }, []);
 
-  const newCount = recent.filter((o) => o.status === "New").length;
+  // Only orders the customer has sent on WhatsApp count as new; the rest are "awaiting WhatsApp".
+  const newCount = recent.filter((o) => o.status === "New" && o.whatsappSentAt).length;
   const activeCount = recent.filter((o) => ["New", "Preparing", "Ready"].includes(o.status)).length;
   const blockedSet = useMemo(() => new Set(blocked.map((b) => b.mobile)), [blocked]);
 
@@ -298,7 +281,7 @@ function Dashboard({ user }: { user: User }) {
             <a href="/" target="_blank" rel="noreferrer" aria-label="View website" className="hidden size-10 place-items-center rounded-full border border-edge/10 text-cream/70 hover:border-edge/25 sm:grid">
               <ExternalLink className="size-4" />
             </a>
-            <button type="button" onClick={() => signOut(auth!)} aria-label="Sign out" title={`Sign out ${user.email ?? ""}`} className="grid size-10 place-items-center rounded-full border border-edge/10 text-cream/70 hover:border-chili hover:text-chili">
+            <button type="button" onClick={onSignOut} aria-label="Sign out" title={`Sign out ${email}`} className="grid size-10 place-items-center rounded-full border border-edge/10 text-cream/70 hover:border-chili hover:text-chili">
               <LogOut className="size-4" />
             </button>
           </div>

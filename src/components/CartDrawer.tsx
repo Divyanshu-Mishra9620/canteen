@@ -3,20 +3,24 @@ import { AnimatePresence, motion } from "motion/react";
 import { AlertTriangle, ArrowLeft, ArrowRight, Check, ChevronDown, LoaderCircle, MapPin, Phone, ShoppingBag, Trash2, Truck, X } from "lucide-react";
 import { HOSTELS, SITE } from "../data/site";
 import { useStore } from "../context/store";
+import { ApiError } from "../lib/api";
 import { LOCATION_MAX_AGE_MS, checkLocation, formatDistance, type LocationCheck } from "../lib/location";
 import {
   OrderError,
+  confirmWhatsapp,
   draftOrder,
   isKnownHostel,
   isValidMobile,
   loadCustomer,
+  loadPending,
   normalizeMobile,
   orderMessage,
   placeOrder,
   saveCustomer,
+  savePending,
   whatsappTo,
   type CustomerDetails,
-  type PlacedOrder,
+  type PendingOrder,
 } from "../lib/orders";
 import { cn, rupee } from "../lib/utils";
 import { WhatsAppIcon } from "./ui/icons";
@@ -164,17 +168,53 @@ const inputClass = (error?: string) =>
   );
 
 export function CartDrawer() {
-  const { cartOpen, setCartOpen, items, subtotal, delivery, grandTotal, count, setQty, clear, scrollTo, settings, menuSource } = useStore();
+  const { cartOpen, setCartOpen, items, subtotal, delivery, grandTotal, count, setQty, clear, scrollTo, settings, refreshMenu } = useStore();
   const [step, setStep] = useState<Step>("cart");
   const [details, setDetails] = useState<CustomerDetails>(loadCustomer);
   const [note, setNote] = useState("");
   const [errors, setErrors] = useState<Errors>({});
   const [busy, setBusy] = useState(false);
   const [failure, setFailure] = useState<OrderError | null>(null);
-  const [placed, setPlaced] = useState<{ order: PlacedOrder; saved: boolean } | null>(null);
+  const [placed, setPlaced] = useState<PendingOrder | null>(null);
   const [geo, setGeo] = useState<LocationCheck>({ status: "idle" });
   const formRef = useRef<HTMLFormElement>(null);
   const alertRef = useRef<HTMLDivElement>(null);
+
+  /** Tell the server this order's WhatsApp message was opened. Idempotent, so safe to retry. */
+  const syncWhatsapp = useCallback(async (p: PendingOrder) => {
+    try {
+      await confirmWhatsapp(p.order.orderId, p.confirmToken);
+      savePending(null);
+    } catch (err) {
+      // 403/404 means the order is gone or already settled: stop retrying. Otherwise keep it for next time.
+      if (err instanceof ApiError && (err.status === 403 || err.status === 404)) savePending(null);
+    }
+  }, []);
+
+  // WhatsApp is compulsory: if an order was saved but never sent, bring the step back (even after a reload).
+  useEffect(() => {
+    const pending = loadPending();
+    if (!pending) return;
+    if (pending.tapped) {
+      void syncWhatsapp(pending);
+      return;
+    }
+    setPlaced(pending);
+    setStep("done");
+    setCartOpen(true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const sendOnWhatsapp = () => {
+    if (!placed) return;
+    const next = { ...placed, tapped: true };
+    setPlaced(next);
+    savePending(next);
+    void syncWhatsapp(next);
+  };
+
+  /** The confirmation screen can't be dismissed until WhatsApp has been opened. */
+  const canClose = step !== "done" || !placed || placed.tapped;
 
   const locate = useCallback(async () => {
     setGeo({ status: "locating" });
@@ -196,10 +236,11 @@ export function CartDrawer() {
 
   useEffect(() => {
     if (!cartOpen) return;
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && setCartOpen(false);
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && canClose && (step === "done" ? finish() : setCartOpen(false));
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [cartOpen, setCartOpen]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cartOpen, canClose, step]);
 
   // An emptied cart can't be on the details step.
   useEffect(() => {
@@ -246,25 +287,24 @@ export function CartDrawer() {
         document.getElementById("location-panel")?.scrollIntoView({ block: "nearest", behavior: "smooth" });
         return;
       }
-      const result = await placeOrder({
-        customer,
-        note,
-        lines,
-        location: fix.location,
-        bumpCounts: menuSource === "firestore",
-      });
-      setPlaced(result);
+      const result = await placeOrder({ customer, note, lines, location: fix.location });
+      // The order is saved. WhatsApp is the compulsory last step: remember it until it's done.
+      const pending: PendingOrder = { ...result, tapped: false };
+      savePending(pending);
+      setPlaced(pending);
       setNote("");
       clear();
       setStep("done");
     } catch (err) {
-      setFailure(err instanceof OrderError ? err : new OrderError("network", "Couldn't place the order. Please try again."));
+      const failed = err instanceof OrderError ? err : new OrderError("network", "Couldn't place the order. Please try again.");
+      if (failed.code === "stock") void refreshMenu(); // so the cart shows what's gone
+      setFailure(failed);
     } finally {
       setBusy(false);
     }
   };
 
-  const title = step === "cart" ? "Your cart" : step === "details" ? "Delivery details" : "Order placed!";
+  const title = step === "cart" ? "Your cart" : step === "details" ? "Delivery details" : placed?.tapped ? "Order sent!" : "Send on WhatsApp";
 
   return (
     <AnimatePresence>
@@ -275,7 +315,7 @@ export function CartDrawer() {
             initial={{ opacity: 0 }}
             animate={{ opacity: 1 }}
             exit={{ opacity: 0 }}
-            onClick={() => (step === "done" ? finish() : setCartOpen(false))}
+            onClick={() => canClose && (step === "done" ? finish() : setCartOpen(false))}
           />
           <motion.aside
             role="dialog"
@@ -305,7 +345,9 @@ export function CartDrawer() {
                 type="button"
                 onClick={() => (step === "done" ? finish() : setCartOpen(false))}
                 aria-label="Close cart"
-                className="grid size-10 place-items-center rounded-full border border-edge/10 transition hover:rotate-90 hover:border-edge/30"
+                disabled={!canClose}
+                title={canClose ? undefined : "Send your order on WhatsApp first"}
+                className="grid size-10 place-items-center rounded-full border border-edge/10 transition hover:rotate-90 hover:border-edge/30 disabled:pointer-events-none disabled:opacity-30"
               >
                 <X className="size-5" />
               </button>
@@ -313,7 +355,7 @@ export function CartDrawer() {
 
             <AnimatePresence mode="wait" initial={false}>
               {step === "done" && placed ? (
-                <Success key="done" placed={placed} whatsappNumber={settings.whatsappNumber} normalCharge={settings.deliveryCharge} onDone={finish} />
+                <Success key="done" placed={placed} normalCharge={settings.deliveryCharge} onSend={sendOnWhatsapp} onDone={finish} />
               ) : items.length === 0 ? (
                 <motion.div key="empty" className="flex flex-1 flex-col items-center justify-center px-8 text-center" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}>
                   <motion.div
@@ -508,10 +550,15 @@ export function CartDrawer() {
                             <AlertTriangle className="size-4 shrink-0 text-chili" />
                             {failure.message}
                           </p>
-                          {failure.code === "blocked" && (
+                          {(failure.code === "blocked" || failure.code === "limit") && (
                             <a href={`tel:+91${SITE.phone}`} className="mt-3 inline-flex items-center gap-2 rounded-full bg-chili px-4 py-2 font-semibold text-coal">
                               <Phone className="size-4" /> Call {SITE.phone}
                             </a>
+                          )}
+                          {failure.code === "stock" && (
+                            <button type="button" onClick={() => setStep("cart")} className="mt-3 inline-flex items-center gap-2 rounded-full bg-cream px-4 py-2 font-semibold text-ink-950">
+                              <ArrowLeft className="size-4" /> Review my cart
+                            </button>
                           )}
                           {(failure.code === "setup" || failure.code === "network") && (
                             <a
@@ -548,7 +595,7 @@ export function CartDrawer() {
                       </span>
                       <span>{rupee(grandTotal)}</span>
                     </Button>
-                    <p className="mt-2 text-center text-xs text-cream/45">Pay on delivery · Cash or UPI</p>
+                    <p className="mt-2 text-center text-xs text-cream/45">Pay on delivery · Next, you'll send your order on WhatsApp to confirm it</p>
                   </footer>
                 </motion.form>
               )}
@@ -560,37 +607,45 @@ export function CartDrawer() {
   );
 }
 
+/**
+ * Step 2 of 2: send the order on WhatsApp. It can't be skipped: the screen stays until the
+ * WhatsApp button has been used, and it returns after a reload if it was never sent.
+ */
 function Success({
   placed,
-  whatsappNumber,
   normalCharge,
+  onSend,
   onDone,
 }: {
-  placed: { order: PlacedOrder; saved: boolean };
-  whatsappNumber: string;
+  placed: PendingOrder;
   normalCharge: number;
+  onSend: () => void;
   onDone: () => void;
 }) {
-  const { order, saved } = placed;
+  const { order, whatsappNumber, tapped } = placed;
   return (
     <motion.div className="flex min-h-0 flex-1 flex-col" initial={{ opacity: 0, scale: 0.97 }} animate={{ opacity: 1, scale: 1 }} transition={{ duration: 0.4, ease: EASE }}>
       <div data-lenis-prevent className="flex-1 overflow-y-auto overscroll-contain p-5">
         <div className="flex flex-col items-center text-center">
           <motion.span
-            className="grid size-20 place-items-center rounded-full bg-veg text-coal"
+            className={cn("grid size-20 place-items-center rounded-full text-coal", tapped ? "bg-veg" : "bg-brand")}
             initial={{ scale: 0, rotate: -45 }}
             animate={{ scale: 1, rotate: 0 }}
             transition={{ type: "spring", stiffness: 260, damping: 14, delay: 0.1 }}
           >
-            <Check className="size-10" strokeWidth={3} />
+            {tapped ? <Check className="size-10" strokeWidth={3} /> : <WhatsAppIcon className="size-10" />}
           </motion.span>
           <p className="mt-5 font-mono text-xs tracking-widest text-cream/50 uppercase">Order ID</p>
           <p className="mt-1 font-display text-3xl font-extrabold tracking-wide text-accent">{order.orderId}</p>
-          <p className="mt-3 max-w-xs text-sm text-cream/60">
-            {saved
-              ? "The canteen has your order. Tap below to also send it on WhatsApp so they can confirm faster."
-              : "Demo mode: this order wasn't saved because Firebase isn't connected yet. Send it on WhatsApp to place it."}
-          </p>
+          {tapped ? (
+            <p className="mt-3 max-w-xs text-sm text-cream/60">
+              WhatsApp is open with your order. <strong className="text-cream">Press Send there</strong> and the canteen will confirm it. Didn't send it? Open WhatsApp again below.
+            </p>
+          ) : (
+            <p className="mt-3 max-w-xs rounded-2xl border border-brand/30 bg-brand/10 p-3 text-sm text-cream/80">
+              <strong className="text-cream">One last step.</strong> Your order isn't confirmed until you send it to the canteen on WhatsApp. Tap the green button, then press Send.
+            </p>
+          )}
         </div>
 
         <div className="mt-6 rounded-2xl border border-edge/10 p-4 text-sm">
@@ -619,13 +674,17 @@ function Success({
           href={whatsappTo(whatsappNumber, orderMessage(order))}
           target="_blank"
           rel="noreferrer"
-          className="flex h-14 w-full items-center justify-center gap-2 rounded-full bg-[#25D366] font-semibold text-coal transition hover:brightness-110"
+          onClick={onSend}
+          className={cn(
+            "flex w-full items-center justify-center gap-2 rounded-full font-semibold transition hover:brightness-110",
+            tapped ? "h-11 border border-[#25D366]/50 text-sm text-cream" : "h-14 bg-[#25D366] text-coal",
+          )}
         >
           <WhatsAppIcon className="size-5" />
-          Send Order on WhatsApp
+          {tapped ? "Open WhatsApp again" : "Send Order on WhatsApp"}
         </a>
-        <Button variant="ghost" className="w-full" onClick={onDone}>
-          Done
+        <Button className="w-full" disabled={!tapped} onClick={onDone}>
+          {tapped ? "Done" : "Send on WhatsApp to finish"}
         </Button>
       </footer>
     </motion.div>

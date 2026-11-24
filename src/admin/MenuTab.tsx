@@ -279,19 +279,19 @@ export function MenuTab({ menu, categories, liveMenu }: { menu: MenuItem[]; cate
     const doImport = async () => {
       setImporting(true);
       try {
-        await importDefaultMenu();
-        toast.success("Default menu imported", { description: "32 items, 6 categories and default settings." });
+        const { restored } = await importDefaultMenu();
+        toast.success("Default menu restored", { description: `${restored} dishes added back.` });
       } catch (e) {
-        fail("import the menu")(e);
+        fail("restore the menu")(e);
       } finally {
         setImporting(false);
       }
     };
     return (
-      <Empty icon={DatabaseZap} title="Your menu isn't in the database yet">
-        <p>Import the default menu (32 items, 6 categories and default settings) to get started. You can edit everything afterwards.</p>
+      <Empty icon={DatabaseZap} title="Your menu is empty">
+        <p>Restore the original 32 dishes and categories, or add your own with "Add item" once you have a category.</p>
         <Button className="mt-6" onClick={doImport} disabled={importing}>
-          {importing && <Spinner />} Import default menu
+          {importing && <Spinner />} Restore default menu
         </Button>
       </Empty>
     );

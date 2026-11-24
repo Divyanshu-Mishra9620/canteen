@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
-import { Ban, ChefHat, MapPin, Phone, Search, Soup, X } from "lucide-react";
+import { Ban, ChefHat, Hourglass, MapPin, Phone, Search, Soup, X } from "lucide-react";
 import { toast } from "sonner";
 import { SITE } from "../data/site";
 import { formatDistance, mapLinkFor } from "../lib/location";
@@ -8,7 +8,7 @@ import { whatsappTo } from "../lib/orders";
 import { cn, rupee } from "../lib/utils";
 import { WhatsAppIcon } from "../components/ui/icons";
 import { VegMark } from "../components/ui/primitives";
-import { ACTIVE_STATUSES, NEXT_STATUS, STATUS_LABEL, setOrderStatus, type AdminOrder, type OrderStatus } from "./api";
+import { ACTIVE_STATUSES, NEXT_STATUS, STATUS_LABEL, confirmOrderWhatsapp, setOrderStatus, type AdminOrder, type OrderStatus } from "./api";
 import { BlockDialog, Empty, Stat, StatusPill, inputClass, timeAgo, timeOf } from "./ui";
 
 function useNow(intervalMs = 30_000) {
@@ -26,6 +26,20 @@ const customerMessage = (o: AdminOrder) =>
 function OrderCard({ order, now, onBlock, blocked }: { order: AdminOrder; now: number; onBlock: (o: AdminOrder) => void; blocked: boolean }) {
   const [busy, setBusy] = useState(false);
   const next = NEXT_STATUS[order.status];
+  // Saved, but the customer hasn't sent it on WhatsApp yet: don't start cooking.
+  const awaiting = order.status === "New" && !order.whatsappSentAt;
+
+  const confirmByHand = async () => {
+    if (!window.confirm("Confirm this order? Only do this if you received it on WhatsApp.")) return;
+    setBusy(true);
+    try {
+      await confirmOrderWhatsapp(order.orderId);
+    } catch (e) {
+      toast.error("Couldn't confirm the order", { description: (e as Error).message });
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const move = async (status: OrderStatus) => {
     if (status === "Cancelled" && !window.confirm(`Cancel order ${order.orderId}?`)) return;
@@ -45,7 +59,10 @@ function OrderCard({ order, now, onBlock, blocked }: { order: AdminOrder; now: n
       initial={{ opacity: 0, y: 16, scale: 0.98 }}
       animate={{ opacity: 1, y: 0, scale: 1 }}
       exit={{ opacity: 0, scale: 0.96 }}
-      className={cn("flex flex-col rounded-3xl border bg-ink-900 p-5", order.status === "New" ? "border-brand/60 shadow-[0_0_0_4px] shadow-brand/10" : "border-edge/10")}
+      className={cn(
+        "flex flex-col rounded-3xl border bg-ink-900 p-5",
+        awaiting ? "border-dashed border-edge/30 opacity-90" : order.status === "New" ? "border-brand/60 shadow-[0_0_0_4px] shadow-brand/10" : "border-edge/10",
+      )}
     >
       <div className="flex items-start justify-between gap-3">
         <div>
@@ -54,8 +71,14 @@ function OrderCard({ order, now, onBlock, blocked }: { order: AdminOrder; now: n
             {timeOf(order.createdAt)} · {timeAgo(order.createdAt, now)}
           </p>
         </div>
-        <StatusPill status={order.status} label={STATUS_LABEL[order.status]} />
+        <StatusPill status={order.status} label={awaiting ? "Awaiting WhatsApp" : STATUS_LABEL[order.status]} />
       </div>
+      {awaiting && (
+        <p className="mt-3 flex gap-2 rounded-xl border border-edge/20 bg-edge/[0.04] px-3 py-2 text-xs text-cream/70">
+          <Hourglass className="mt-0.5 size-3.5 shrink-0 text-accent" />
+          The customer hasn't sent this on WhatsApp yet. Wait for their message before preparing it.
+        </p>
+      )}
 
       <div className="mt-4 rounded-2xl bg-edge/[0.04] p-3.5 text-sm">
         <p className="flex items-center gap-2 font-semibold">
@@ -98,15 +121,26 @@ function OrderCard({ order, now, onBlock, blocked }: { order: AdminOrder; now: n
       </div>
 
       <div className="mt-4 flex flex-wrap gap-2">
-        {next && (
+        {awaiting ? (
           <button
             type="button"
             disabled={busy}
-            onClick={() => move(next.to)}
-            className="h-11 flex-1 rounded-full bg-brand px-4 text-sm font-bold text-coal transition hover:bg-brand-300 disabled:opacity-50"
+            onClick={confirmByHand}
+            className="h-11 flex-1 rounded-full border border-brand/60 px-4 text-sm font-bold text-accent transition hover:bg-brand/10 disabled:opacity-50"
           >
-            {next.action}
+            I got it on WhatsApp: confirm
           </button>
+        ) : (
+          next && (
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => move(next.to)}
+              className="h-11 flex-1 rounded-full bg-brand px-4 text-sm font-bold text-coal transition hover:bg-brand-300 disabled:opacity-50"
+            >
+              {next.action}
+            </button>
+          )
         )}
         {ACTIVE_STATUSES.includes(order.status) && (
           <button type="button" disabled={busy} onClick={() => move("Cancelled")} className="h-11 rounded-full border border-chili/40 px-4 text-sm font-semibold text-chili hover:bg-chili/10">
@@ -139,7 +173,7 @@ function OrderCard({ order, now, onBlock, blocked }: { order: AdminOrder; now: n
   );
 }
 
-type LiveFilter = "active" | "New" | "Preparing" | "Ready";
+type LiveFilter = "active" | "Awaiting" | "New" | "Preparing" | "Ready";
 
 export function LiveOrdersTab({ orders, loading, blockedSet }: { orders: AdminOrder[]; loading: boolean; blockedSet: Set<string> }) {
   const now = useNow();
@@ -151,14 +185,16 @@ export function LiveOrdersTab({ orders, loading, blockedSet }: { orders: AdminOr
     () => orders.filter((o) => ACTIVE_STATUSES.includes(o.status)).sort((a, b) => (a.createdAt?.getTime() ?? 0) - (b.createdAt?.getTime() ?? 0)),
     [orders],
   );
-  const shown = filter === "active" ? active : active.filter((o) => o.status === filter);
-  const counts = { active: active.length, New: 0, Preparing: 0, Ready: 0 } as Record<LiveFilter, number>;
-  active.forEach((o) => counts[o.status as LiveFilter]++);
+  const isAwaiting = (o: AdminOrder) => o.status === "New" && !o.whatsappSentAt;
+  const matches = (o: AdminOrder, f: LiveFilter) =>
+    f === "active" ? true : f === "Awaiting" ? isAwaiting(o) : f === "New" ? o.status === "New" && !!o.whatsappSentAt : o.status === f;
+  const shown = active.filter((o) => matches(o, filter));
+  const counts = Object.fromEntries((["active", "Awaiting", "New", "Preparing", "Ready"] as LiveFilter[]).map((f) => [f, active.filter((o) => matches(o, f)).length])) as Record<LiveFilter, number>;
 
   return (
     <div>
       <div className="no-scrollbar -mx-4 flex gap-1.5 overflow-x-auto px-4 pb-1">
-        {(["active", "New", "Preparing", "Ready"] as LiveFilter[]).map((f) => (
+        {(["active", "New", "Awaiting", "Preparing", "Ready"] as LiveFilter[]).map((f) => (
           <button
             key={f}
             type="button"
@@ -168,7 +204,7 @@ export function LiveOrdersTab({ orders, loading, blockedSet }: { orders: AdminOr
               filter === f ? "bg-brand text-coal" : "bg-edge/[0.05] text-cream/65 hover:text-cream",
             )}
           >
-            {f === "active" ? "All active" : f === "Ready" ? "Ready / Out" : f}
+            {f === "active" ? "All active" : f === "Ready" ? "Ready / Out" : f === "Awaiting" ? "Awaiting WhatsApp" : f}
             <span className={cn("font-mono text-xs", filter === f ? "text-coal/60" : "text-cream/40")}>{counts[f]}</span>
           </button>
         ))}
@@ -211,10 +247,13 @@ export function HistoryTab({ recent, today, blockedSet }: { recent: AdminOrder[]
   const [open, setOpen] = useState<string | null>(null);
   const [blockTarget, setBlockTarget] = useState<AdminOrder | null>(null);
 
-  const counted = today.filter((o) => o.status !== "Cancelled");
+  // Orders the customer never sent on WhatsApp aren't counted as sales.
+  const confirmed = today.filter((o) => o.whatsappSentAt);
+  const awaitingCount = today.filter((o) => o.status === "New" && !o.whatsappSentAt).length;
+  const counted = confirmed.filter((o) => o.status !== "Cancelled");
   const revenue = counted.reduce((sum, o) => sum + o.grandTotal, 0);
   const delivered = today.filter((o) => o.status === "Delivered").length;
-  const cancelled = today.length - counted.length;
+  const cancelled = confirmed.length - counted.length;
 
   const q = search.trim().toLowerCase();
   const list = q
@@ -234,8 +273,8 @@ export function HistoryTab({ recent, today, blockedSet }: { recent: AdminOrder[]
   return (
     <div>
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <Stat label="Today's orders" value={counted.length} hint={`${cancelled} cancelled`} />
-        <Stat label="Today's revenue" value={rupee(revenue)} hint="Excludes cancelled" />
+        <Stat label="Today's orders" value={counted.length} hint={`${cancelled} cancelled${awaitingCount ? ` · ${awaitingCount} awaiting WhatsApp` : ""}`} />
+        <Stat label="Today's revenue" value={rupee(revenue)} hint="WhatsApp-confirmed, not cancelled" />
         <Stat label="Delivered" value={delivered} hint={`${counted.length - delivered} still in progress`} />
         <Stat label="Avg. order" value={counted.length ? rupee(Math.round(revenue / counted.length)) : "—"} />
       </div>
@@ -275,7 +314,7 @@ export function HistoryTab({ recent, today, blockedSet }: { recent: AdminOrder[]
                       </span>
                     </span>
                     <span className="font-display font-bold tabular-nums">{rupee(o.grandTotal)}</span>
-                    <StatusPill status={o.status} />
+                    <StatusPill status={o.status} label={o.status === "New" && !o.whatsappSentAt ? "Awaiting WhatsApp" : undefined} />
                   </button>
                   <AnimatePresence initial={false}>
                     {open === o.orderId && (

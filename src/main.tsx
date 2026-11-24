@@ -7,7 +7,7 @@ import "@fontsource/caveat/600.css";
 import "./index.css";
 import App from "./App";
 
-// The owner dashboard (and Firebase Auth/Storage) is only downloaded on /admin.
+// The owner dashboard is only downloaded on /admin.
 const AdminApp = lazy(() => import("./admin/AdminApp"));
 const isAdminRoute = window.location.pathname.replace(/\/+$/, "") === "/admin";
 
